@@ -21,6 +21,15 @@ playwright install chromium
 
 Nada mais é necessário: a interface usa Tkinter (incluído no Python).
 
+> **Atenção ao `python` do PATH.** Se tiver o LibreOffice Portable ou o XAMPP
+> instalados, o primeiro `python.exe` do PATH pode ser o Python embutido deles
+> (3.8, sem Tkinter). Nesse caso o arranque falha com
+> `ModuleNotFoundError: No module named 'tkinter'`.
+> O `run_app.bat` já trata disto: testa cada candidato e só aceita Python 3.10+
+> **com** Tkinter, mostrando no fim qual vai usar. Se arrancar a app à mão, use
+> `py -3 -m rececionista` (o launcher oficial aponta para o Python correto) em
+> vez de `python -m rececionista`.
+
 ## 2. Arrancar
 
 ```bat
@@ -30,7 +39,7 @@ run_app.bat
 ou
 
 ```bat
-python -m rececionista
+py -3 -m rececionista
 ```
 
 ## 3. Testar sem WhatsApp (recomendado para começar)
@@ -110,7 +119,7 @@ calibrada no PC real — os seletores estão todos em
 ## 7. Testes automáticos
 
 ```bat
-python -m unittest tests.test_rececionista_engine -v
+py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
 29 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
