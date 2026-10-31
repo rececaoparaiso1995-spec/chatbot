@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import BookingRecord
+from .phones import normalize_phone
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -73,6 +74,7 @@ class Store:
         created_at: datetime | None = None,
     ) -> None:
         stamp = (created_at or datetime.now()).isoformat(timespec="seconds")
+        phone = normalize_phone(phone)
         with self._lock:
             self._conn.execute(
                 "INSERT INTO messages (phone, direction, body, language, intent, created_at)"
@@ -82,6 +84,7 @@ class Store:
             self._conn.commit()
 
     def conversation(self, phone: str, limit: int = 200) -> list[sqlite3.Row]:
+        phone = normalize_phone(phone)
         with self._lock:
             cur = self._conn.execute(
                 "SELECT * FROM messages WHERE phone = ? ORDER BY id DESC LIMIT ?",

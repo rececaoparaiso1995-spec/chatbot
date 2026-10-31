@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rececionista import nlu, settings, templates
-from rececionista.engine import Engine, in_window, normalize_phone
+from rececionista.engine import Engine, in_window, normalize_phone, same_number
 from rececionista.fake_pms import BLACKOUTS, FictitiousPMS, VILLAS
 from rececionista.store import Store
 
@@ -145,7 +145,24 @@ class TestGates(Base):
         self.assertFalse(in_window(datetime(2026, 11, 1, 12, 0), "22:30", "07:00"))
 
     def test_telefone_normalizado(self) -> None:
-        self.assertEqual(normalize_phone("+351 912 345 678"), "+351912345678")
+        self.assertEqual(normalize_phone("+351 912 345 678"), "351912345678")
+        self.assertEqual(normalize_phone("00351 912 345 678"), "351912345678")
+
+    def test_mesmo_numero_em_formatos_diferentes(self) -> None:
+        for escrito in ("+351 912 345 678", "351912345678", "912345678", "912 345 678"):
+            lead = f"Formatos: {escrito!r}"
+            self.assertTrue(same_number(escrito, "+351912345678"), lead)
+            self.assertTrue(same_number("+351912345678", escrito), lead)
+
+    def test_numeros_diferentes_nao_coincidem(self) -> None:
+        self.assertFalse(same_number("912345678", "351912345679"))
+        self.assertFalse(same_number("912345678", "351999999999"))
+        self.assertFalse(same_number("", "351912345678"))
+
+    def test_modo_teste_aceita_numero_sem_indicativo(self) -> None:
+        self.cfg.test_numbers = ["+351 912 345 678"]
+        outs = self.engine.handle("912345678", "Boa noite, têm disponibilidade?")
+        self.assertTrue(outs, "o número nacional devia ser reconhecido como autorizado")
 
 
 class TestConsulta(Base):

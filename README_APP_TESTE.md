@@ -48,6 +48,11 @@ No separador **Simulador**:
 
 1. Confirme o número em "Número do cliente" (por defeito `+351900000001`,
    que está na lista de autorizados).
+   O número pode ser escrito em qualquer formato — `+351 912 345 678`,
+   `00351912345678` ou `912345678` são o mesmo contacto. Se aparecer
+   *"Mensagem não respondida (número não autorizado)"*, a mensagem mostra o
+   número tal como foi interpretado e o separador **Configuração** tem a lista
+   de autorizados.
 2. Use os botões de exemplo (Disponibilidade PT/EN/ES/FR, Sem disponibilidade,
    Fotos, Spa, Quero reservar, Áudio) ou escreva livremente.
 3. As respostas aparecem no painel; os pedidos de reserva vão para o separador

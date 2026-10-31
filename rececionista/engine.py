@@ -39,9 +39,8 @@ SUMMARY_LABELS = {
 }
 
 
-def normalize_phone(phone: str) -> str:
-    cleaned = re.sub(r"[^\d+]", "", phone or "")
-    return cleaned
+# Reexportados: o resto do código sempre importou estes helpers daqui.
+from .phones import normalize_phone, same_number  # noqa: E402
 
 
 def in_window(now: datetime, start: str = "22:30", end: str = "07:00") -> bool:
@@ -86,9 +85,8 @@ class Engine:
         ):
             return False, "fora do horário automático"
         if mode == settings.MODE_TESTE:
-            allowed = {normalize_phone(n) for n in self.cfg.test_numbers}
-            if normalize_phone(phone) not in allowed:
-                return False, "número não autorizado (modo teste)"
+            if not any(same_number(phone, n) for n in self.cfg.test_numbers):
+                return False, f"número não autorizado (modo teste): {normalize_phone(phone)}"
         return True, ""
 
     # ------------------------------------------------------------------
