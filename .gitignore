@@ -22,3 +22,5 @@ data/teste_app/logs/
 Thumbs.db
 desktop.ini
 .DS_Store
+app_run.log
+app.pid
