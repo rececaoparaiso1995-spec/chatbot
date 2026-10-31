@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime da app de teste (não versionar dados de execução nem sessões)
+data/teste_app/*.db
+data/teste_app/*.db-*
+data/teste_app/chrome_profile/
+data/teste_app/logs/
+
+# Segredos e ambiente
+.env
+.env.*
+!.env.example
+.infisical.json
+
+# Sistema
+Thumbs.db
+desktop.ini
+.DS_Store
