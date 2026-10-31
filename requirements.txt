@@ -1,0 +1,47 @@
+# Rececionista Virtual — Paraíso Villas & Spa
+# requirements.txt — Dependências Python do projeto
+
+# --- Automação de browser (WhatsApp Web + Newhotel Cloud) ---
+playwright==1.47.*
+
+# --- IA local (Ollama com modelos CPU) ---
+ollama==0.3.*
+
+# --- Interface gráfica (GUI desktop) ---
+customtkinter==5.2.*
+
+# --- Imagens (miniaturas na GUI) ---
+Pillow==10.*
+
+# --- Geração de PDFs (pedidos de reserva) ---
+reportlab==4.*
+
+# --- Leitura de PDFs (cartas do hotel) ---
+pymupdf==1.24.*
+
+# --- Documentos Word (opcional, para futura leitura de ficheiros .docx) ---
+python-docx==1.1.*
+
+# --- Ficheiros Excel (opcional) ---
+openpyxl==3.1.*
+
+# --- Agendador de tarefas (horário automático 22h30-07h00) ---
+schedule==1.2.*
+
+# --- Diretórios de dados da aplicação ---
+appdirs==1.4.*
+
+# --- Proteção de credenciais (Fernet encryption) ---
+cryptography==42.*
+
+# --- Compilação para .exe (opcional, para distribuição) ---
+# pyinstaller==6.*
+
+# ---------------------------------------------------------------------------
+# INSTALAÇÃO:
+#   pip install -r requirements.txt
+#   playwright install chromium
+#
+# MODELO OLLAMA (executar no terminal após instalar Ollama):
+#   ollama pull qwen2.5:3b-instruct-q4_K_M
+# ---------------------------------------------------------------------------
