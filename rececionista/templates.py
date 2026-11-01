@@ -39,6 +39,21 @@ STRINGS: dict[str, dict[str, str]] = {
             "e saída e o número de hóspedes."
         ),
         "ask_nights": "Quantas noites pretende ficar?",
+        "ask_dates_reception": (
+            "Para registar o seu pedido, indique por favor as datas de entrada e "
+            "saída e o número de hóspedes. A receção responde com a disponibilidade "
+            "e o preço assim que abrir."
+        ),
+        "request_noted": (
+            "Registei o seu pedido para {checkin} a {checkout} ({guests} hóspede(s)). "
+            "Assim que a receção abrir, alguém entrará em contacto com a "
+            "disponibilidade e o preço para essas datas. O pedido ainda não está "
+            "confirmado."
+        ),
+        "cannot_confirm": (
+            "Neste momento não consigo confirmar a disponibilidade. Vou encaminhar "
+            "o seu pedido para a receção, que responderá durante o dia."
+        ),
         "ack_wait": "Um momento, estou a verificar a disponibilidade. 🙂",
         "no_availability": (
             "Neste momento não tenho disponibilidade para {checkin} a {checkout} "
@@ -112,6 +127,21 @@ STRINGS: dict[str, dict[str, str]] = {
             "and the number of guests."
         ),
         "ask_nights": "How many nights would you like to stay?",
+        "ask_dates_reception": (
+            "To register your request, please share your arrival and departure "
+            "dates and the number of guests. Reception will reply with "
+            "availability and rates as soon as it opens."
+        ),
+        "request_noted": (
+            "I have registered your request from {checkin} to {checkout} "
+            "({guests} guest(s)). As soon as reception opens, someone will contact "
+            "you with availability and rates for those dates. The request is not "
+            "yet confirmed."
+        ),
+        "cannot_confirm": (
+            "I cannot confirm availability at the moment. I will forward your "
+            "request to reception, who will reply during the day."
+        ),
         "ack_wait": "One moment, I am checking availability. 🙂",
         "no_availability": (
             "I currently have no availability from {checkin} to {checkout} "
@@ -183,6 +213,21 @@ STRINGS: dict[str, dict[str, str]] = {
             "entrada y salida y el número de huéspedes."
         ),
         "ask_nights": "¿Cuántas noches desea alojarse?",
+        "ask_dates_reception": (
+            "Para registrar su solicitud, indique por favor las fechas de entrada "
+            "y salida y el número de huéspedes. Recepción responderá con la "
+            "disponibilidad y el precio en cuanto abra."
+        ),
+        "request_noted": (
+            "He registrado su solicitud del {checkin} al {checkout} "
+            "({guests} huésped(es)). En cuanto abra recepción, alguien se pondrá en "
+            "contacto con la disponibilidad y el precio para esas fechas. La "
+            "solicitud aún no está confirmada."
+        ),
+        "cannot_confirm": (
+            "En este momento no puedo confirmar la disponibilidad. Voy a enviar su "
+            "solicitud a recepción, que responderá durante el día."
+        ),
         "ack_wait": "Un momento, estoy comprobando la disponibilidad. 🙂",
         "no_availability": (
             "En este momento no tengo disponibilidad del {checkin} al {checkout} "
@@ -255,6 +300,21 @@ STRINGS: dict[str, dict[str, str]] = {
             "et de départ ainsi que le nombre de personnes."
         ),
         "ask_nights": "Combien de nuits souhaitez-vous séjourner ?",
+        "ask_dates_reception": (
+            "Pour enregistrer votre demande, merci d'indiquer vos dates d'arrivée "
+            "et de départ ainsi que le nombre de personnes. La réception répondra "
+            "avec les disponibilités et le tarif dès son ouverture."
+        ),
+        "request_noted": (
+            "J'ai enregistré votre demande du {checkin} au {checkout} "
+            "({guests} personne(s)). Dès l'ouverture de la réception, quelqu'un "
+            "vous contactera avec les disponibilités et le tarif pour ces dates. "
+            "La demande n'est pas encore confirmée."
+        ),
+        "cannot_confirm": (
+            "Je ne peux pas confirmer les disponibilités pour le moment. Je "
+            "transmets votre demande à la réception, qui répondra dans la journée."
+        ),
         "ack_wait": "Un instant, je vérifie les disponibilités. 🙂",
         "no_availability": (
             "Je n'ai pas de disponibilité du {checkin} au {checkout} "

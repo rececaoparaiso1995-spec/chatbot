@@ -42,7 +42,7 @@ _LANG_HINTS: dict[str, tuple[str, ...]] = {
     "en": (
         "hello", "hi", "good morning", "good evening", "thanks", "thank you",
         "availability", "breakfast", "night", "nights", "price", "booking",
-        "would", "like", "please", "for", "with", "without", "room", "villa",
+        "would", "like", "please", "for", "with", "without", "room",
         "i", "we", "is", "the",
     ),
     "es": (

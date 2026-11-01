@@ -46,6 +46,20 @@ class AppConfig:
     schedule_start: str = "22:30"
     schedule_end: str = "07:00"
 
+    # Disponibilidade e preços.
+    #   True  -> lê o ficheiro CSV indicado (sem navegador, sem Newhotel)
+    #   False -> não consulta nada: regista o pedido e diz que a receção
+    #            responde quando abrir
+    use_availability_file: bool = False
+    availability_file: str = str(DATA_DIR / "disponibilidade.csv")
+
+    # Modelo local (Ollama) para compreender mensagens que as regras não
+    # apanham. Só interpreta; preços e confirmações continuam nos templates.
+    use_llm: bool = False
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen3:4b"
+    ollama_timeout: int = 45
+
     debounce_seconds: int = 8
     send_acknowledgement: bool = True
     default_language: str = "pt"

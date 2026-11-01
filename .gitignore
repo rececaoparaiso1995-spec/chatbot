@@ -9,6 +9,7 @@ venv/
 data/teste_app/*.db
 data/teste_app/*.db-*
 data/teste_app/app_config.json
+data/teste_app/disponibilidade.csv
 data/teste_app/chrome_profile/
 data/teste_app/logs/
 

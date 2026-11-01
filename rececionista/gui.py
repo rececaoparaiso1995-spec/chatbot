@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import settings
+from . import availability, llm, settings
 from .engine import Engine, normalize_phone
 from .store import Store, export_bookings_csv
 from .transport.simulator import SimulatorTransport
@@ -94,10 +94,12 @@ class RecepcionistaApp(tk.Tk):
             font=("Segoe UI", 15, "bold"),
         ).pack(side="left", padx=16)
 
-        tk.Label(
-            header, text="DADOS FICTÍCIOS · SEM NEWHOTEL", bg="#374151", fg="#fbbf24",
+        self.source_badge = tk.Label(
+            header, text="", bg="#374151", fg="#fbbf24",
             font=("Segoe UI", 9, "bold"), padx=10, pady=4,
-        ).pack(side="left")
+        )
+        self.source_badge.pack(side="left")
+        self._refresh_source_badge()
 
         self.state_label = tk.Label(
             header, text="", bg="#4a5568", fg="white",
@@ -297,6 +299,93 @@ class RecepcionistaApp(tk.Tk):
         self.numbers_text.pack(anchor="w", pady=(2, 10))
         self.numbers_text.insert("1.0", "\n".join(self.cfg.test_numbers))
 
+        availability_box = ttk.LabelFrame(
+            left, text="Disponibilidade e preços (sem navegador)"
+        )
+        availability_box.pack(anchor="w", fill="x", pady=(0, 10))
+
+        self.use_file_var = tk.BooleanVar(value=self.cfg.use_availability_file)
+        ttk.Checkbutton(
+            availability_box,
+            text="Ler disponibilidade e preços do ficheiro local",
+            variable=self.use_file_var,
+            command=self._refresh_source_badge,
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        file_row = ttk.Frame(availability_box)
+        file_row.pack(anchor="w", fill="x", padx=8, pady=2)
+        self.availability_path_var = tk.StringVar(value=self.cfg.availability_file)
+        ttk.Entry(file_row, textvariable=self.availability_path_var, width=40).pack(
+            side="left", expand=True, fill="x"
+        )
+
+        buttons_row = ttk.Frame(availability_box)
+        buttons_row.pack(anchor="w", padx=8, pady=(2, 4))
+        ttk.Button(
+            buttons_row, text="Criar ficheiro de exemplo", command=self._write_sample_file
+        ).pack(side="left")
+        ttk.Button(
+            buttons_row, text="Abrir ficheiro", command=self._open_availability_file
+        ).pack(side="left", padx=6)
+
+        ttk.Label(
+            availability_box,
+            text=(
+                "Desligado: a app não consulta preços — regista o pedido e avisa o "
+                "cliente de que a receção responde assim que abrir."
+            ),
+            wraplength=430, justify="left", foreground="#6b7280",
+        ).pack(anchor="w", padx=8, pady=(0, 8))
+
+        llm_box = ttk.LabelFrame(left, text="Compreensão com modelo local (Ollama)")
+        llm_box.pack(anchor="w", fill="x", pady=(0, 10))
+
+        self.use_llm_var = tk.BooleanVar(value=self.cfg.use_llm)
+        ttk.Checkbutton(
+            llm_box,
+            text="Usar o modelo quando as regras não percebem a mensagem",
+            variable=self.use_llm_var,
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        llm_row = ttk.Frame(llm_box)
+        llm_row.pack(anchor="w", fill="x", padx=8, pady=2)
+        ttk.Label(llm_row, text="Endereço", width=9).pack(side="left")
+        self.ollama_url_var = tk.StringVar(value=self.cfg.ollama_url)
+        ttk.Entry(llm_row, textvariable=self.ollama_url_var, width=30).pack(
+            side="left", expand=True, fill="x"
+        )
+
+        model_row = ttk.Frame(llm_box)
+        model_row.pack(anchor="w", fill="x", padx=8, pady=2)
+        ttk.Label(model_row, text="Modelo", width=9).pack(side="left")
+        self.ollama_model_var = tk.StringVar(value=self.cfg.ollama_model)
+        ttk.Entry(model_row, textvariable=self.ollama_model_var, width=30).pack(
+            side="left", expand=True, fill="x"
+        )
+
+        timeout_row = ttk.Frame(llm_box)
+        timeout_row.pack(anchor="w", fill="x", padx=8, pady=2)
+        ttk.Label(timeout_row, text="Espera", width=9).pack(side="left")
+        self.ollama_timeout_var = tk.StringVar(value=str(self.cfg.ollama_timeout))
+        ttk.Spinbox(
+            timeout_row, from_=5, to=180, width=5, textvariable=self.ollama_timeout_var
+        ).pack(side="left")
+        ttk.Label(timeout_row, text="segundos por resposta").pack(side="left", padx=6)
+
+        ttk.Button(llm_box, text="Testar ligação", command=self._test_ollama).pack(
+            anchor="w", padx=8, pady=(4, 2)
+        )
+
+        self.llm_status = ttk.Label(
+            llm_box,
+            text=(
+                "Desligado: só regras. Ligado: mensagens ambíguas são enviadas ao "
+                "modelo local (mais lento, melhor compreensão)."
+            ),
+            wraplength=430, justify="left", foreground="#6b7280",
+        )
+        self.llm_status.pack(anchor="w", padx=8, pady=(0, 8))
+
         self.respect_schedule = tk.BooleanVar(value=self.cfg.respect_schedule)
         ttk.Checkbutton(
             left, text="Respeitar horário automático (22h30–07h00)",
@@ -394,6 +483,17 @@ class RecepcionistaApp(tk.Tk):
         phone = normalize_phone(self.phone_var.get()) or "+351900000001"
         self._append("cliente", text)
 
+        if self.cfg.use_llm:
+            # O modelo local pode demorar 5-20 s: não bloquear a janela.
+            self._system("A interpretar com o modelo local…")
+            threading.Thread(
+                target=lambda: self.inbox.put(("reply", phone, text)), daemon=True
+            ).start()
+            return
+
+        self._deliver(phone, text)
+
+    def _deliver(self, phone: str, text: str) -> None:
         if "[áudio]" in text.lower():
             outs = self.engine.handle_media(phone, "audio")
         else:
@@ -459,7 +559,14 @@ class RecepcionistaApp(tk.Tk):
             return
         rows = self.store.conversation(phone, limit=40)
         if not rows:
-            self._system("Simulador pronto. Os preços mostrados são FICTÍCIOS.")
+            self._system(
+                "Simulador pronto. "
+                + (
+                    "Preços lidos do ficheiro de disponibilidade."
+                    if self.cfg.use_availability_file
+                    else "Sem preços: os pedidos ficam registados para a receção responder."
+                )
+            )
             return
         self._system("Histórico recente desta conversa:")
         for row in rows:
@@ -504,6 +611,19 @@ class RecepcionistaApp(tk.Tk):
                 item = self.inbox.get_nowait()
                 if isinstance(item, Event):
                     self.wa_status.set(item.message)
+                elif isinstance(item, tuple) and item and item[0] == "llm":
+                    _, ok, message = item
+                    self.llm_status.configure(
+                        text=("✓ " if ok else "✗ ") + message,
+                        foreground="#166534" if ok else "#b45309",
+                    )
+                    self.store.log_event(
+                        "INFO" if ok else "WARNING", "llm", f"Teste Ollama: {message}"
+                    )
+                    self._refresh_logs()
+                elif isinstance(item, tuple) and item and item[0] == "reply":
+                    _, phone, text = item
+                    self._deliver(phone, text)
                 elif isinstance(item, tuple) and item and item[0] == "incoming":
                     _, chat, text = item
                     self._append("cliente", f"[WhatsApp: {chat}]\n{text}")
@@ -598,6 +718,10 @@ class RecepcionistaApp(tk.Tk):
             if line.strip()
         ]
         self.cfg.test_numbers = numbers or list(settings.DEFAULT_TEST_NUMBERS)
+        self.cfg.use_availability_file = bool(self.use_file_var.get())
+        self.cfg.availability_file = (
+            self.availability_path_var.get().strip() or self.cfg.availability_file
+        )
         self.cfg.respect_schedule = bool(self.respect_schedule.get())
         self.cfg.schedule_start = self.start_var.get().strip() or "22:30"
         self.cfg.schedule_end = self.end_var.get().strip() or "07:00"
@@ -606,14 +730,94 @@ class RecepcionistaApp(tk.Tk):
         self.cfg.whatsapp_send_mode = self.send_mode.get()
         self.cfg.whatsapp_target = self.target_var.get().strip()
         self.cfg.whatsapp_auto_poll = bool(self.auto_poll.get())
+        self.cfg.use_llm = bool(self.use_llm_var.get())
+        self.cfg.ollama_url = self.ollama_url_var.get().strip() or llm.DEFAULT_URL
+        self.cfg.ollama_model = self.ollama_model_var.get().strip() or llm.DEFAULT_MODEL
+        try:
+            self.cfg.ollama_timeout = max(5, min(180, int(self.ollama_timeout_var.get())))
+        except ValueError:
+            self.cfg.ollama_timeout = 45
         self.cfg.save()
-        self.store.log_event("INFO", "gui", "Configuração guardada")
+        self.store.log_event(
+            "INFO",
+            "gui",
+            "Configuração guardada — preços: "
+            + ("ficheiro local" if self.cfg.use_availability_file else "desligados"),
+        )
         self._refresh_logs()
+        self._refresh_source_badge()
         messagebox.showinfo("Configuração", "Configuração guardada.")
 
     def _save_runtime(self) -> None:
         self.cfg.auto_forward = bool(self.auto_forward.get())
         self.cfg.save()
+
+    def _test_ollama(self) -> None:
+        client = llm.OllamaClient(
+            base_url=self.ollama_url_var.get().strip() or llm.DEFAULT_URL,
+            model=self.ollama_model_var.get().strip() or llm.DEFAULT_MODEL,
+            timeout=15,
+        )
+        self.llm_status.configure(text="A contactar o Ollama…", foreground="#6b7280")
+
+        def run() -> None:
+            ok, message = client.check()
+            self.inbox.put(("llm", ok, message))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _refresh_source_badge(self) -> None:
+        var = getattr(self, "use_file_var", None)
+        enabled = bool(var.get()) if var is not None else self.cfg.use_availability_file
+        self.source_badge.configure(
+            text="PREÇOS: FICHEIRO LOCAL" if enabled else "SEM PREÇOS · RECEÇÃO RESPONDE",
+            fg="#34d399" if enabled else "#fbbf24",
+        )
+
+    def _write_sample_file(self) -> None:
+        path = Path(
+            self.availability_path_var.get().strip() or self.cfg.availability_file
+        )
+        try:
+            availability.write_sample(path)
+        except OSError as exc:
+            messagebox.showerror(
+                "Ficheiro de disponibilidade", f"Não foi possível criar:\n{exc}"
+            )
+            return
+        self.availability_path_var.set(str(path))
+        self.store.log_event(
+            "INFO", "gui", f"Ficheiro de disponibilidade criado: {path}"
+        )
+        self._refresh_logs()
+        messagebox.showinfo(
+            "Ficheiro de disponibilidade",
+            f"Criado com 45 dias a partir de hoje:\n{path}\n\n"
+            "Pode editá-lo no Excel. A app relê o ficheiro quando ele muda.",
+        )
+
+    def _open_availability_file(self) -> None:
+        path = Path(
+            self.availability_path_var.get().strip() or self.cfg.availability_file
+        )
+        if not path.exists():
+            messagebox.showwarning(
+                "Ficheiro de disponibilidade",
+                "Ainda não existe. Use «Criar ficheiro de exemplo» ou copie o "
+                "caminho do ficheiro que a receção usa.",
+            )
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as exc:  # pragma: no cover
+            messagebox.showerror(
+                "Ficheiro de disponibilidade", f"Não foi possível abrir:\n{path}\n\n{exc}"
+            )
 
     def _open_data_dir(self) -> None:
         path = str(settings.DATA_DIR)

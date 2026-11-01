@@ -2,13 +2,16 @@
 rececionista/engine.py — Orquestrador determinístico da conversa.
 
 Fluxo por mensagem:
-    gate de modo/horário/números → interpretação (regras) → consulta ao PMS
-    FICTÍCIO → composição por template → resposta(s)
+    gate de modo/horário/números → interpretação (regras) → consulta à fonte de
+    disponibilidade (CSV local, se o interruptor estiver ligado; caso contrário
+    o pedido é registado) → composição por template → resposta(s)
 
 Garantias (alinhadas com a especificação):
   * Não responde em DESLIGADO/EMERGÊNCIA.
   * Em modo TESTE só responde a números autorizados.
-  * Nunca inventa preços: se não houver oferta, responde com indisponibilidade.
+  * Nunca inventa preços: se não houver oferta, responde com indisponibilidade;
+    se a fonte falhar ou não cobrir as datas, passa o pedido à receção.
+  * Sem navegador: a única fonte além do PMS injetado é o ficheiro CSV.
   * Nunca confirma reservas: o pedido fica sempre pendente.
 """
 
@@ -19,8 +22,8 @@ import re
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from . import nlu, settings, templates
-from .fake_pms import VILLAS, FictitiousPMS
+from . import availability, llm, nlu, settings, templates
+from .fake_pms import VILLAS
 from .models import BookingDraft, BookingRecord, Offer, Outbound, Session
 from .store import Store
 
@@ -62,13 +65,32 @@ class Engine:
     def __init__(
         self,
         config: settings.AppConfig | None = None,
-        pms: FictitiousPMS | None = None,
+        pms: object | None = None,
         store: Store | None = None,
+        llm_client: object | None = None,
     ):
         self.cfg = config or settings.AppConfig.load()
-        self.pms = pms or FictitiousPMS()
+        # Fontes injetadas (usadas nos testes); por omissão vêm da configuração.
+        self.pms = pms
         self.store = store
+        self._llm = llm_client  # type: ignore[assignment]
         self.sessions: dict[str, Session] = {}
+
+    # ------------------------------------------------------------------
+    # Fonte de disponibilidade
+    # ------------------------------------------------------------------
+
+    def availability_source(self) -> object | None:
+        """Devolve a fonte de disponibilidade, ou None se estiver desligada.
+
+        Não existe automação de navegador: ou se lê o ficheiro da receção, ou
+        não se consulta nada e o pedido fica para a receção responder.
+        """
+        if self.pms is not None:
+            return self.pms
+        if self.cfg.use_availability_file:
+            return availability.FilePMS(self.cfg.availability_file)
+        return None
 
     # ------------------------------------------------------------------
     # Gates
@@ -109,6 +131,13 @@ class Engine:
 
         parsed = nlu.parse(text, today=now.date(), default_language=self.cfg.default_language)
         session = self._session(phone)
+
+        # As regras resolvem a maioria das mensagens. Só quando não percebem
+        # nada é que o modelo local é consultado (custa alguns segundos).
+        if self.cfg.use_llm:
+            parsed = self._assist_with_llm(session, text, parsed, now)
+        parsed = self._apply_session_context(session, parsed)
+
         lang = parsed.language or session.language or self.cfg.default_language
         session.language = lang
         session.last_activity = now
@@ -173,6 +202,131 @@ class Engine:
         return [self._text(phone, templates.t(lang, key))]
 
     # ------------------------------------------------------------------
+    # Compreensão assistida (LLM local)
+    # ------------------------------------------------------------------
+
+    def llm_client(self) -> llm.OllamaClient | None:
+        """Cliente do modelo local, ou None se estiver desligado na configuração."""
+        if not self.cfg.use_llm:
+            return None
+        if self._llm is None:
+            self._llm = llm.OllamaClient(
+                base_url=self.cfg.ollama_url,
+                model=self.cfg.ollama_model,
+                timeout=self.cfg.ollama_timeout,
+            )
+        return self._llm
+
+    def _history(self, session: Session) -> list[tuple[str, str]]:
+        """Últimas mensagens da conversa, para o modelo resolver elipses."""
+        turns: list[tuple[str, str]] = []
+        if self.store:
+            try:
+                rows = self.store.conversation(session.phone, limit=6)
+            except Exception:  # pragma: no cover - leitura de histórico é opcional
+                rows = []
+            for row in rows:
+                who = "user" if row["direction"] == "in" else "assistant"
+                turns.append((who, row["body"]))
+        if not turns and session.last_offer is not None:
+            offer = session.last_offer
+            turns.append(
+                (
+                    "assistant",
+                    f"Orçamento apresentado: {offer.villa.name}, entrada "
+                    f"{offer.checkin.isoformat()}, {offer.nights} noite(s), "
+                    f"total {offer.total:.2f} EUR.",
+                )
+            )
+        return turns
+
+    def _apply_session_context(self, session: Session, parsed: nlu.Parsed) -> nlu.Parsed:
+        """Completa uma mensagem curta com as datas da consulta anterior.
+
+        "E se ficássemos só duas noites?" não traz datas: aproveita-se a
+        entrada do último orçamento desta conversa em vez de voltar a pedi-las.
+        """
+        if parsed.checkin is not None or session.last_offer is None:
+            return parsed
+        if not parsed.nights or parsed.nights <= 0:
+            return parsed
+
+        base = session.last_offer
+        checkin = base.checkin
+        nights = parsed.nights
+        if checkin < date.today():
+            return parsed
+        log.info(
+            "Contexto: %s noite(s) aplicadas à entrada de %s (último orçamento)",
+            nights, checkin,
+        )
+        return nlu.Parsed(
+            raw=parsed.raw,
+            language=parsed.language,
+            intent=parsed.intent if parsed.intent != "unclear" else "availability",
+            checkin=checkin,
+            checkout=checkin + timedelta(days=nights),
+            nights=nights,
+            adults=parsed.adults or base.adults,
+            children=parsed.children or base.children,
+            meal=parsed.meal or base.meal,
+            villa=parsed.villa or base.villa.code,
+            email=parsed.email,
+            phone=parsed.phone,
+            name=parsed.name,
+            has_dates=True,
+        )
+
+    def _assist_with_llm(
+        self, session: Session, text: str, parsed: nlu.Parsed, now: datetime
+    ) -> nlu.Parsed:
+        """Consulta o modelo quando as regras não perceberam a mensagem.
+
+        O resultado é somado ao que as regras já tinham: as regras ganham
+        sempre nas entidades que já detetaram, e o modelo só preenche o que
+        faltava. Qualquer falha mantém o resultado das regras.
+        """
+        if parsed.intent != "unclear":
+            return parsed
+        client = self.llm_client()
+        if client is None:
+            return parsed
+
+        result = client.interpret(
+            text, today=now.date(), history=self._history(session)
+        )
+        if result is None or not result.is_useful():
+            return parsed
+
+        checkin = parsed.checkin or result.checkin
+        checkout = parsed.checkout or result.checkout
+        nights = parsed.nights or result.nights
+        if checkin and checkout and not nights:
+            nights = (checkout - checkin).days
+
+        merged = nlu.Parsed(
+            raw=parsed.raw,
+            language=parsed.language or result.language,
+            intent=result.intent,
+            checkin=checkin,
+            checkout=checkout,
+            nights=nights,
+            adults=parsed.adults or result.adults,
+            children=parsed.children or result.children,
+            meal=parsed.meal or result.meal,
+            villa=parsed.villa or result.villa,
+            email=parsed.email or result.email,
+            phone=parsed.phone,
+            name=parsed.name or result.name,
+            has_dates=bool(checkin),
+        )
+        log.info(
+            "LLM: %r → intent=%s datas=%s/%s noites=%s",
+            text[:60], merged.intent, merged.checkin, merged.checkout, merged.nights,
+        )
+        return merged
+
+    # ------------------------------------------------------------------
     # Disponibilidade e preços
     # ------------------------------------------------------------------
 
@@ -184,6 +338,11 @@ class Engine:
             nights = max(0, (parsed.checkout - parsed.checkin).days)
         if nights <= 0:
             return [self._text(phone, templates.t(lang, "ask_nights"))]
+
+        source = self.availability_source()
+        if source is None:
+            # Sem fonte de preços: nunca inventar. Regista o pedido.
+            return self._register_request(session, parsed, lang, nights)
 
         adults = parsed.adults or 2
         children = max(0, parsed.children or 0)
@@ -201,7 +360,13 @@ class Engine:
             session.clarify_count += 1
             return out
 
-        offers = self.pms.quote(parsed.checkin, nights, adults, children, meal, villa)
+        try:
+            offers = source.quote(parsed.checkin, nights, adults, children, meal, villa)
+        except availability.AvailabilityError as exc:
+            log.warning("Disponibilidade indisponível: %s", exc)
+            return [
+                self._text(phone, templates.t(lang, "cannot_confirm"), escalate=True)
+            ]
 
         if not offers:
             message = templates.t(
@@ -211,10 +376,13 @@ class Engine:
                 checkout=templates.dmy(parsed.checkin + timedelta(days=nights)),
                 guests=adults + children,
             )
-            alternatives = self.pms.alternatives(
-                parsed.checkin, nights, adults, children, meal, window=7, max_results=3,
-                villa_code=villa,
-            )
+            try:
+                alternatives = source.alternatives(
+                    parsed.checkin, nights, adults, children, meal, window=7,
+                    max_results=3, villa_code=villa,
+                )
+            except availability.AvailabilityError:
+                alternatives = []
             if alternatives:
                 message += "\n\n" + templates.t(lang, "alternatives_intro")
                 for alt in alternatives:
@@ -240,6 +408,33 @@ class Engine:
         if session.want_booking:
             out += self._begin_draft_from_offer(session, session.last_offer, lang)
         return out
+
+    def _register_request(
+        self, session: Session, parsed: nlu.Parsed, lang: str, nights: int | None = None
+    ) -> list[Outbound]:
+        """Sem fonte de preços: regista o pedido e remete a resposta à receção.
+
+        Nunca apresenta valores nesta situação (não há como confirmá-los) e a
+        conversa fica marcada para intervenção humana.
+        """
+        phone = session.phone
+        if not parsed.has_dates:
+            return [self._text(phone, templates.t(lang, "ask_dates_reception"))]
+
+        total_nights = nights or 0
+        if total_nights <= 0:
+            return [self._text(phone, templates.t(lang, "ask_nights"))]
+
+        assert parsed.checkin is not None
+        guests = (parsed.adults or 2) + max(0, parsed.children or 0)
+        message = templates.t(
+            lang,
+            "request_noted",
+            checkin=templates.dmy(parsed.checkin),
+            checkout=templates.dmy(parsed.checkin + timedelta(days=total_nights)),
+            guests=guests,
+        )
+        return [self._text(phone, message, escalate=True)]
 
     def _compose_offers(self, offers: list[Offer], lang: str) -> str:
         blocks: list[str] = [templates.t(lang, "offers_intro")]
@@ -343,6 +538,9 @@ class Engine:
 
     def _start_booking(self, session: Session, parsed: nlu.Parsed, lang: str) -> list[Outbound]:
         phone = session.phone
+        if self.availability_source() is None:
+            # Sem preços: registar a intenção e remeter para a receção.
+            return self._register_request(session, parsed, lang)
         if session.last_offer is None:
             session.want_booking = True
             return [self._text(phone, templates.t(lang, "booking_wait_dates"))]

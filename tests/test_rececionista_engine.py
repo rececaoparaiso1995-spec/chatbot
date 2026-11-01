@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rececionista import nlu, settings, templates
+from rececionista import llm, nlu, settings, templates
 from rececionista.engine import Engine, in_window, normalize_phone, same_number
 from rececionista.fake_pms import BLACKOUTS, FictitiousPMS, VILLAS
 from rececionista.store import Store
@@ -316,6 +316,234 @@ class TestFechoEFormato(Base):
         second = self.pms.nightly_price(villa, day, "BB", 2)
         self.assertEqual(first, second)
         self.assertGreater(first, villa.base_rate)
+
+
+class FakeLLM:
+    """Substitui o Ollama nos testes: devolve o que lhe mandarem."""
+
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = 0
+        self.last_history: list[tuple[str, str]] = []
+
+    def interpret(self, message, today=None, history=None):
+        self.calls += 1
+        self.last_history = list(history or [])
+        return self.result
+
+
+class BaseComLLM(Base):
+    def setUp(self) -> None:
+        super().setUp()
+        self.cfg.use_llm = True
+
+    def engine_with(self, fake: FakeLLM) -> Engine:
+        return Engine(self.cfg, pms=self.pms, store=self.store, llm_client=fake)
+
+
+class TestCompreensaoComLLM(BaseComLLM):
+    """O modelo só entra quando as regras não percebem a mensagem."""
+
+    FRASE_AMBIGUA = "andava a ver se dava para ficar aí uns dias em dezembro"
+
+    def test_regras_resolvem_e_o_modelo_nao_e_chamado(self) -> None:
+        fake = FakeLLM(None)
+        engine = self.engine_with(fake)
+        day = self.find_available()
+        engine.handle(
+            self.phone,
+            f"tem disponibilidade de {day.strftime('%d/%m/%Y')} a "
+            f"{(day + timedelta(days=2)).strftime('%d/%m/%Y')} para 2 pessoas",
+        )
+        self.assertEqual(fake.calls, 0)
+
+    def test_modelo_resolve_intencao_e_datas(self) -> None:
+        day = self.find_available()
+        fake = FakeLLM(
+            llm.LlmResult(intent="availability", checkin=day, nights=2, adults=2)
+        )
+        engine = self.engine_with(fake)
+        text = "\n".join(o.text for o in engine.handle(self.phone, self.FRASE_AMBIGUA))
+        self.assertEqual(fake.calls, 1)
+        self.assertIn("€", text)
+        self.assertIn("noite", text.lower())
+
+    def test_modelo_indisponivel_volta_às_regras(self) -> None:
+        fake = FakeLLM(None)
+        engine = self.engine_with(fake)
+        text = "\n".join(o.text for o in engine.handle(self.phone, self.FRASE_AMBIGUA))
+        self.assertEqual(fake.calls, 1)
+        self.assertIn("não compreendi", text.lower())
+
+    def test_desligado_no_configuracao_nao_chama_o_modelo(self) -> None:
+        self.cfg.use_llm = False
+        fake = FakeLLM(llm.LlmResult(intent="availability"))
+        engine = self.engine_with(fake)
+        engine.handle(self.phone, self.FRASE_AMBIGUA)
+        self.assertEqual(fake.calls, 0)
+
+    def test_modelo_recebe_o_historico_da_conversa(self) -> None:
+        fake = FakeLLM(llm.LlmResult(intent="greeting"))
+        engine = self.engine_with(fake)
+        engine.handle(self.phone, "Bom dia")
+        engine.handle(self.phone, self.FRASE_AMBIGUA)
+        self.assertEqual(fake.calls, 1)
+        self.assertTrue(any("Bom dia" in text for _, text in fake.last_history))
+
+
+class TestContextoDaConversa(Base):
+    def test_duas_noites_aproveita_a_entrada_anterior(self) -> None:
+        day = self.find_available(nights=3)
+        first = "\n".join(
+            o.text
+            for o in self.engine.handle(
+                self.phone,
+                f"de {day.strftime('%d/%m/%Y')} a "
+                f"{(day + timedelta(days=3)).strftime('%d/%m/%Y')} para 2 pessoas",
+            )
+        )
+        self.assertIn("€", first)
+
+        second = "\n".join(
+            o.text for o in self.engine.handle(self.phone, "e se fossem só 2 noites?")
+        )
+        self.assertIn("€", second)
+        self.assertIn(templates.dmy(day), second)
+        self.assertNotIn("datas de entrada e saída", second.lower())
+
+    def test_sem_orcamento_anterior_pede_datas(self) -> None:
+        text = "\n".join(o.text for o in self.engine.handle(self.phone, "e 2 noites?"))
+        self.assertIn("datas", text.lower())
+
+
+class TestClienteOllama(unittest.TestCase):
+    """Validação da resposta do modelo, sem rede."""
+
+    def client(self) -> llm.OllamaClient:
+        return llm.OllamaClient("http://localhost:11434", "modelo-teste", 5)
+
+    def test_json_com_markdown_e_aceite(self) -> None:
+        result = self.client()._to_result(
+            '```json\n{"intent": "availability", "nights": 2}\n```', date(2026, 11, 1)
+        )
+        self.assertEqual(result.intent, "availability")
+        self.assertEqual(result.nights, 2)
+
+    def test_lixo_do_modelo_da_erro_em_vez_de_inventar(self) -> None:
+        with self.assertRaises(llm.LlmError):
+            self.client()._to_result("Não sei responder a isso.", date(2026, 11, 1))
+
+    def test_valores_fora_do_dominio_sao_descartados(self) -> None:
+        result = self.client()._to_result(
+            '{"intent": "comprar_um_carro", "villa": "T9", "meal": "XP", '
+            '"adults": 99, "language": "de"}',
+            date(2026, 11, 1),
+        )
+        self.assertEqual(result.intent, "unclear")
+        self.assertIsNone(result.villa)
+        self.assertIsNone(result.meal)
+        self.assertIsNone(result.adults)
+        self.assertIsNone(result.language)
+        self.assertFalse(result.is_useful())
+
+    def test_datas_no_passado_sao_rejeitadas(self) -> None:
+        result = self.client()._to_result(
+            '{"intent": "availability", "checkin": "2020-01-01", "nights": 2}',
+            date(2026, 11, 1),
+        )
+        self.assertIsNone(result.checkin)
+
+    def test_ollama_em_falta_nao_levanta(self) -> None:
+        client = llm.OllamaClient("http://127.0.0.1:9", "modelo-teste", 1)
+        self.assertIsNone(client.interpret("olá"))
+        ok, message = client.check()
+        self.assertFalse(ok)
+        self.assertTrue(message)
+
+
+class TestDisponibilidadePorFicheiro(unittest.TestCase):
+    """Toggle: ficheiro local ligado, ou pedido registado para a receção."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.store = Store(self.dir / "teste.db")
+        self.csv = self.dir / "disponibilidade.csv"
+        self.cfg = settings.AppConfig()
+        self.cfg.mode = settings.MODE_TESTE
+        self.cfg.test_numbers = ["+351900000001"]
+        self.cfg.send_acknowledgement = False
+        self.phone = "+351900000001"
+
+    def tearDown(self) -> None:
+        self.store.close()
+        self.tmp.cleanup()
+
+    def engine(self) -> Engine:
+        return Engine(self.cfg, store=self.store)
+
+    def write_csv(self, days: int = 10, price: str = "200.00") -> None:
+        start = date.today() + timedelta(days=5)
+        lines = ["data,villa,disponivel,preco_bb,preco_ro"]
+        for i in range(days):
+            day = start + timedelta(days=i)
+            for code in ("T0", "T1", "T2"):
+                lines.append(f"{day.isoformat()},{code},sim,{price},{price}")
+        self.csv.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.checkin = start
+
+    def test_desligado_regista_pedido_sem_precos(self) -> None:
+        self.cfg.use_availability_file = False
+        out = self.engine().handle(
+            self.phone, "queria um quarto de 20 a 23 de dezembro para 2"
+        )
+        text = "\n".join(o.text for o in out)
+        self.assertIn("20/12", text)
+        self.assertIn("receção", text.lower())
+        self.assertNotIn("€", text)
+        self.assertTrue(any(o.meta.get("escalate") for o in out))
+
+    def test_ligado_le_precos_do_ficheiro(self) -> None:
+        self.write_csv()
+        self.cfg.use_availability_file = True
+        self.cfg.availability_file = str(self.csv)
+        day = self.checkin
+        text = "\n".join(
+            o.text
+            for o in self.engine().handle(
+                self.phone,
+                f"tem disponibilidade de {day.strftime('%d/%m/%Y')} a "
+                f"{(day + timedelta(days=2)).strftime('%d/%m/%Y')} para 2 pessoas",
+            )
+        )
+        self.assertIn("200,00", text)
+        self.assertNotIn("receção", text.lower().split("total")[0])
+
+    def test_ligado_sem_cobertura_nao_inventa(self) -> None:
+        self.write_csv(days=3)
+        self.cfg.use_availability_file = True
+        self.cfg.availability_file = str(self.csv)
+        far = date.today() + timedelta(days=200)
+        text = "\n".join(
+            o.text
+            for o in self.engine().handle(
+                self.phone,
+                f"de {far.strftime('%d/%m/%Y')} a "
+                f"{(far + timedelta(days=2)).strftime('%d/%m/%Y')} para 2",
+            )
+        )
+        self.assertIn("receção", text.lower())
+        self.assertNotIn("€", text)
+
+    def test_ficheiro_em_falta_tambem_vai_para_a_rececao(self) -> None:
+        self.cfg.use_availability_file = True
+        self.cfg.availability_file = str(self.dir / "nao_existe.csv")
+        out = self.engine().handle(
+            self.phone, "queria de 20 a 23 de dezembro para 2 pessoas"
+        )
+        text = "\n".join(o.text for o in out)
+        self.assertIn("receção", text.lower())
+        self.assertTrue(any(o.meta.get("escalate") for o in out))
 
 
 class TestRetencao(Base):
