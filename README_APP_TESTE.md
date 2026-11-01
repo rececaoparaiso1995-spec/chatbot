@@ -198,6 +198,12 @@ Ollama for antigo, atualize-o a partir do site.
 - Se responder com **datas novas** (*"afinal de 25 a 27 de dezembro"*), essas
   datas ganham às guardadas — só as noites são aproveitadas da consulta
   pendente.
+- **O contexto sobrevive a fechar a app.** O último orçamento e a consulta
+  pendente ficam na tabela `sessions` da base de dados, por número: reabrir a
+  app e responder *"e se fossem só duas noites?"* continua a funcionar. O
+  contexto é retomado até **24 horas** depois da última mensagem; passado esse
+  prazo é descartado. **Limpar** a conversa no simulador apaga também o
+  contexto guardado.
 - Se o modelo não ajudar, o **separador Registos** mostra o motivo
   (`Modelo não ajudou: Ollama inacessível…`, `JSON inválido…`). Antes, uma
   falha do modelo era indistinguível de "as regras também não perceberam".
@@ -266,11 +272,12 @@ calibrada no PC real — os seletores estão todos em
 py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
-52 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
+57 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
 orçamento com preço por noite, alternativas, falha do PMS sem invenção,
 fluxo de reserva completo e parcial, fecho de turno, formatação de preços,
 retenção, as duas vias do interruptor de disponibilidade, a reaproveitação do
-contexto da conversa ("2" depois de "quantas noites?", "só duas noites") e o
+contexto da conversa ("2" depois de "quantas noites?", "só duas noites",
+respostas vagas, contexto retomado após reiniciar, expiração às 24 h) e o
 cliente do modelo local (com um Ollama falso: JSON com
 markdown, lixo, valores fora do domínio, datas no passado, serviço em falta).
 Nenhum teste precisa de Ollama, Playwright, Internet ou Newhotel.

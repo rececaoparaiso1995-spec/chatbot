@@ -9,6 +9,7 @@ Não requer Playwright, Ollama, Newhotel nem ligação à Internet.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -316,6 +317,87 @@ class TestFechoEFormato(Base):
         second = self.pms.nightly_price(villa, day, "BB", 2)
         self.assertEqual(first, second)
         self.assertGreater(first, villa.base_rate)
+
+
+class TestContextoPersistente(Base):
+    """O contexto guardado na base de dados sobrevive a reiniciar a app."""
+
+    def new_engine(self) -> Engine:
+        """Simula um arranque novo: sessões em memória vazias, mesma base."""
+        return Engine(self.cfg, pms=self.pms, store=self.store)
+
+    def test_orcamento_sobrevive_ao_arranque(self) -> None:
+        day = self.find_available(nights=3)
+        self.engine.handle(
+            self.phone,
+            f"de {day.strftime('%d/%m/%Y')} a "
+            f"{(day + timedelta(days=3)).strftime('%d/%m/%Y')} para 2 pessoas",
+        )
+
+        text = "\n".join(
+            o.text for o in self.new_engine().handle(self.phone, "e se fossem só 2 noites?")
+        )
+        self.assertIn("€", text)
+        self.assertIn(templates.dmy(day), text)
+
+    def test_consulta_pendente_sobrevive_ao_arranque(self) -> None:
+        day = self.find_available(nights=2)
+        self.engine.handle(
+            self.phone,
+            f"disponibilidade para {day.strftime('%d/%m/%Y')} para 2 pessoas",
+        )
+
+        text = "\n".join(o.text for o in self.new_engine().handle(self.phone, "2"))
+        self.assertIn("€", text)
+        self.assertIn(templates.dmy(day), text)
+
+    def test_contexto_com_mais_de_24h_e_ignorado(self) -> None:
+        day = self.find_available(nights=2)
+        self.engine.handle(
+            self.phone,
+            f"disponibilidade para {day.strftime('%d/%m/%Y')} para 2 pessoas",
+        )
+
+        guardado = self.store.load_session_state(self.phone)
+        self.assertIsNotNone(guardado)
+        assert guardado is not None
+        payload, _ = guardado
+        antigo = datetime.now() - timedelta(hours=25)
+        self.store.save_session_state(self.phone, payload, at=antigo)
+
+        text = "\n".join(o.text for o in self.new_engine().handle(self.phone, "2"))
+        self.assertNotIn("€", text)
+        # O contexto antigo foi descartado: a linha que fica é a nova, vazia.
+        guardado = self.store.load_session_state(self.phone)
+        self.assertIsNotNone(guardado)
+        assert guardado is not None
+        payload = json.loads(guardado[0])
+        self.assertIsNone(payload["last_offer"])
+        self.assertIsNone(payload["pending_quote"])
+
+    def test_limpar_conversa_apaga_o_contexto_guardado(self) -> None:
+        day = self.find_available(nights=2)
+        self.engine.handle(
+            self.phone,
+            f"disponibilidade para {day.strftime('%d/%m/%Y')} para 2 pessoas",
+        )
+        self.assertIsNotNone(self.store.load_session_state(self.phone))
+
+        self.engine.reset_sessions()
+        self.assertIsNone(self.store.load_session_state(self.phone))
+
+    def test_sem_base_de_dados_continua_a_funcionar_em_memoria(self) -> None:
+        engine = Engine(self.cfg, pms=self.pms, store=None)
+        day = self.find_available(nights=2)
+        engine.handle(
+            self.phone,
+            f"de {day.strftime('%d/%m/%Y')} a "
+            f"{(day + timedelta(days=2)).strftime('%d/%m/%Y')} para 2 pessoas",
+        )
+        text = "\n".join(
+            o.text for o in engine.handle(self.phone, "e se fossem só 3 noites?")
+        )
+        self.assertIn("€", text)
 
 
 class FakeLLM:

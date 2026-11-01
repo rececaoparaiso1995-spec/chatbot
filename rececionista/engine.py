@@ -17,6 +17,7 @@ Garantias (alinhadas com a especificação):
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import date, datetime, time, timedelta
@@ -24,7 +25,14 @@ from pathlib import Path
 
 from . import availability, llm, nlu, settings, templates
 from .fake_pms import VILLAS
-from .models import BookingDraft, BookingRecord, Offer, Outbound, Session
+from .models import (
+    BookingDraft,
+    BookingRecord,
+    NightlyRate,
+    Offer,
+    Outbound,
+    Session,
+)
 from .store import Store
 
 log = logging.getLogger("rececionista.engine")
@@ -44,6 +52,81 @@ SUMMARY_LABELS = {
 
 # Reexportados: o resto do código sempre importou estes helpers daqui.
 from .phones import normalize_phone, same_number  # noqa: E402
+
+
+# Até quando o contexto guardado na base de dados é retomado após reiniciar.
+STATE_TTL = timedelta(hours=24)
+
+
+def _offer_to_dict(offer: Offer) -> dict:
+    return {
+        "villa": offer.villa.code,
+        "meal": offer.meal,
+        "checkin": offer.checkin.isoformat(),
+        "nights": offer.nights,
+        "adults": offer.adults,
+        "children": offer.children,
+        "nightly": [[n.date.isoformat(), n.price] for n in offer.nightly],
+        "total": offer.total,
+    }
+
+
+def _offer_from_dict(data: object) -> Offer | None:
+    if not isinstance(data, dict):
+        return None
+    try:
+        code = str(data["villa"]).upper()
+        villa = next((v for v in VILLAS if v.code == code), None)
+        if villa is None:
+            return None
+        nightly = [
+            NightlyRate(date=date.fromisoformat(str(day)), price=float(price))
+            for day, price in data.get("nightly", [])
+        ]
+        return Offer(
+            villa=villa,
+            meal=str(data["meal"]),
+            checkin=date.fromisoformat(str(data["checkin"])),
+            nights=int(data["nights"]),
+            adults=int(data["adults"]),
+            children=int(data["children"]),
+            nightly=nightly,
+            total=float(data["total"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _pending_to_dict(pending: dict) -> dict:
+    converted = dict(pending)
+    if isinstance(converted.get("checkin"), date):
+        converted["checkin"] = converted["checkin"].isoformat()
+    if isinstance(converted.get("at"), datetime):
+        converted["at"] = converted["at"].isoformat(timespec="seconds")
+    return converted
+
+
+def _pending_from_dict(data: object) -> dict | None:
+    if not isinstance(data, dict):
+        return None
+    try:
+        checkin = date.fromisoformat(str(data["checkin"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    pending: dict = {
+        "checkin": checkin,
+        "adults": data.get("adults"),
+        "children": data.get("children"),
+        "meal": data.get("meal"),
+        "villa": data.get("villa"),
+        "language": data.get("language"),
+        "at": None,
+    }
+    try:
+        pending["at"] = datetime.fromisoformat(str(data["at"]))
+    except (KeyError, TypeError, ValueError):
+        pass
+    return pending
 
 
 def in_window(now: datetime, start: str = "22:30", end: str = "07:00") -> bool:
@@ -192,6 +275,7 @@ class Engine:
                 self.store.save_message(
                     phone, "out", item.text, language=lang, created_at=now
                 )
+        self._persist_session(session)
         return out
 
     def handle_media(self, phone: str, kind: str, now: datetime | None = None) -> list[Outbound]:
@@ -808,8 +892,74 @@ class Engine:
 
     def _session(self, phone: str) -> Session:
         if phone not in self.sessions:
-            self.sessions[phone] = Session(phone=phone)
+            self.sessions[phone] = self._restore_session(phone) or Session(phone=phone)
         return self.sessions[phone]
+
+    # ------------------------------------------------------------------
+    # Contexto guardado (sobrevive a reiniciar a app)
+    # ------------------------------------------------------------------
+
+    def _restore_session(self, phone: str) -> Session | None:
+        """Recupera o contexto deste número guardado na base de dados."""
+        if not self.store:
+            return None
+        try:
+            loaded = self.store.load_session_state(phone)
+        except Exception as exc:  # pragma: no cover - leitura opcional
+            log.warning("Não foi possível ler o contexto guardado: %s", exc)
+            return None
+        if loaded is None:
+            return None
+
+        payload, stamp = loaded
+        if datetime.now() - stamp > STATE_TTL:
+            try:
+                self.store.clear_session_state(phone)
+            except Exception:  # pragma: no cover
+                pass
+            return None
+
+        try:
+            data = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+
+        session = Session(phone=phone)
+        language = data.get("language")
+        session.language = language if isinstance(language, str) and language else None
+        session.greeted = bool(data.get("greeted"))
+        session.last_offer = _offer_from_dict(data.get("last_offer"))
+        session.pending_quote = _pending_from_dict(data.get("pending_quote"))
+        session.last_activity = stamp
+        if session.last_offer is not None or session.pending_quote is not None:
+            log.info("Contexto de %s retomado da base de dados", phone)
+        return session
+
+    def _persist_session(self, session: Session) -> None:
+        """Guarda o contexto da conversa para o próximo arranque."""
+        if not self.store:
+            return
+        payload = json.dumps(
+            {
+                "last_offer": (
+                    _offer_to_dict(session.last_offer) if session.last_offer else None
+                ),
+                "pending_quote": (
+                    _pending_to_dict(session.pending_quote)
+                    if session.pending_quote
+                    else None
+                ),
+                "language": session.language,
+                "greeted": session.greeted,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            self.store.save_session_state(session.phone, payload)
+        except Exception as exc:  # pragma: no cover - não pode quebrar a resposta
+            log.warning("Não foi possível guardar o contexto: %s", exc)
 
     def _text(
         self,
@@ -836,4 +986,10 @@ class Engine:
         ]
 
     def reset_sessions(self) -> None:
+        for phone in list(self.sessions):
+            if self.store:
+                try:
+                    self.store.clear_session_state(phone)
+                except Exception:  # pragma: no cover
+                    pass
         self.sessions.clear()

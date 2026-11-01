@@ -1,7 +1,7 @@
 """
 rececionista/store.py — Persistência local (SQLite) do harness.
 
-Tabelas: messages, bookings, events.
+Tabelas: messages, bookings, events, sessions (contexto por número).
 Retenção (RF-47): conversas/eventos 7 dias; pedidos de reserva até 30 dias
 depois de fechados.
 """
@@ -43,6 +43,14 @@ CREATE TABLE IF NOT EXISTS bookings (
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     level TEXT, module TEXT, message TEXT, created_at TEXT
+);
+
+-- Estado da conversa por número (último orçamento, consulta pendente):
+-- permite retomar o contexto depois de fechar e reabrir a app.
+CREATE TABLE IF NOT EXISTS sessions (
+    phone TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 """
 
@@ -92,6 +100,46 @@ class Store:
             )
             rows = cur.fetchall()
         return list(reversed(rows))
+
+    # ------------------------------------------------------------------
+    # Estado da conversa (contexto entre arranques)
+    # ------------------------------------------------------------------
+
+    def save_session_state(
+        self, phone: str, payload: str, at: datetime | None = None
+    ) -> None:
+        phone = normalize_phone(phone)
+        stamp = (at or datetime.now()).isoformat(timespec="seconds")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sessions(phone, payload, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(phone) DO UPDATE SET "
+                "payload = excluded.payload, updated_at = excluded.updated_at",
+                (phone, payload, stamp),
+            )
+            self._conn.commit()
+
+    def load_session_state(self, phone: str) -> tuple[str, datetime] | None:
+        """Devolve (payload, última atualização), ou None se não existir."""
+        phone = normalize_phone(phone)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload, updated_at FROM sessions WHERE phone = ?", (phone,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            stamp = datetime.fromisoformat(row["updated_at"])
+        except ValueError:
+            return None
+        return str(row["payload"]), stamp
+
+    def clear_session_state(self, phone: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM sessions WHERE phone = ?", (normalize_phone(phone),)
+            )
+            self._conn.commit()
 
     def conversations(self) -> list[sqlite3.Row]:
         with self._lock:
@@ -197,6 +245,7 @@ class Store:
                 (booking_cutoff,),
             )
             removed += cur.rowcount or 0
+            self._conn.execute("DELETE FROM sessions WHERE updated_at < ?", (cutoff,))
             self._conn.commit()
         return removed
 
