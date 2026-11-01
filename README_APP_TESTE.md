@@ -64,6 +64,21 @@ No separador **Simulador**:
 3. As respostas aparecem no painel; os pedidos de reserva vão para o separador
    **Pedidos de reserva** com estado `pending`.
 
+**Datas que a app entende** (PT/EN/ES/FR):
+
+| Forma | Exemplo |
+|---|---|
+| Numérica | `12/12/2026 a 15/12/2026` |
+| Dia e mês | `12 a 15 de dezembro`, `20 de dezembro` |
+| Dia da semana | `quinta`, `quinta-feira`, `quinta feira`, `sexta`, `domingo` |
+| Intervalo por dias da semana | `de quinta a domingo`, `entrar sexta e sair segunda` |
+| Relativa | `amanhã`, `depois de amanhã` |
+
+O dia da semana é a **próxima** ocorrência desse dia (incluindo hoje). Depois de
+a app perguntar as noites, responder só com o dia da saída
+(*"quinta"* → *"domingo"*) conta as noites a partir da entrada guardada.
+Uma data explícita (`20 de dezembro`) ganha sempre ao dia da semana.
+
 Fluxo completo a experimentar:
 
 ```
@@ -241,7 +256,7 @@ calibrada no PC real — os seletores estão todos em
 | Área | Estado |
 |---|---|
 | Motor de conversa determinístico (gates de modo/horário/números) | ✅ |
-| Interpretação PT/EN/ES/FR por regras (datas, hóspedes, regime, villa) | ✅ |
+| Interpretação PT/EN/ES/FR por regras (datas, dias da semana, hóspedes, regime, villa) | ✅ |
 | Preços por noite + total lidos de ficheiro CSV local (interruptor) | ✅ |
 | Interruptor desligado: regista o pedido e remete para a receção, sem valores | ✅ |
 | Alternativas ±7 dias, máximo 3, mesmo nº de hóspedes | ✅ |
@@ -272,12 +287,13 @@ calibrada no PC real — os seletores estão todos em
 py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
-57 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
+66 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
 orçamento com preço por noite, alternativas, falha do PMS sem invenção,
 fluxo de reserva completo e parcial, fecho de turno, formatação de preços,
 retenção, as duas vias do interruptor de disponibilidade, a reaproveitação do
 contexto da conversa ("2" depois de "quantas noites?", "só duas noites",
-respostas vagas, contexto retomado após reiniciar, expiração às 24 h) e o
+respostas vagas, dias da semana em 4 idiomas, contexto retomado após
+reiniciar, expiração às 24 h) e o
 cliente do modelo local (com um Ollama falso: JSON com
 markdown, lixo, valores fora do domínio, datas no passado, serviço em falta).
 Nenhum teste precisa de Ollama, Playwright, Internet ou Newhotel.

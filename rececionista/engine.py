@@ -364,11 +364,24 @@ class Engine:
         # "fim de semana", "uns dias", "uma semana"…
         # Numa resposta curta manda a interpretação de noites: "3-4 noites"
         # pode ter sido lido como dia/mês pelo parser de datas.
-        if pending is not None and (checkin is None or len((parsed.raw or "").split()) <= 5):
+        words = len((parsed.raw or "").split())
+        if pending is not None and (checkin is None or words <= 5):
+            start = pending["checkin"]
             loose, reason = nlu.extract_nights_loose(parsed.raw or "")
+
+            # "domingo" depois de "quantas noites?" é o dia da saída, contado
+            # a partir da entrada guardada (não a partir de hoje).
+            if not loose and checkin is not None and isinstance(start, date):
+                wk_in, wk_out = nlu.extract_weekdays(parsed.raw or "", date.today())
+                if wk_in is not None and wk_out is None:
+                    delta = (wk_in.weekday() - start.weekday()) % 7
+                    if 1 <= delta <= 14:
+                        loose = delta
+                        reason = f"saída num {wk_in.strftime('%A')} → {delta} noite(s)"
+
             if loose:
                 log.info("Contexto: %s", reason)
-                checkin = pending["checkin"]
+                checkin = start
                 nights = loose
                 adults = adults or pending.get("adults") or 2
                 children = children or pending.get("children") or 0

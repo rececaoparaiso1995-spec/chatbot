@@ -169,6 +169,48 @@ _RE_RELATIVE = (
 )
 
 
+# Dias da semana (PT/EN/ES/FR). `_norm` já retirou os acentos.
+_WEEKDAYS: dict[str, int] = {
+    "segunda": 0, "terca": 1, "quarta": 2, "quinta": 3, "sexta": 4,
+    "sabado": 5, "domingo": 6,
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4,
+    "saturday": 5, "sunday": 6,
+    "lunes": 0, "martes": 1, "miercoles": 2, "jueves": 3, "viernes": 4,
+    "lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4,
+    "samedi": 5, "dimanche": 6,
+}
+
+_RE_WEEKDAY = re.compile(
+    r"\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|monday|tuesday|wednesday|"
+    r"thursday|friday|saturday|sunday|lunes|martes|miercoles|jueves|viernes|lundi|"
+    r"mardi|mercredi|jeudi|vendredi|samedi|dimanche)(?:s)?\b(?:[-\s]feira)?"
+)
+
+
+def extract_weekdays(text: str, today: date) -> tuple[date | None, date | None]:
+    """
+    Datas dadas por dia da semana: "quinta", "quinta-feira", "de sexta a domingo".
+
+    A primeira referência é a entrada (a próxima ocorrência desse dia, incluindo
+    hoje) e a segunda é a saída (o dia seguinte da mesma semana, se for depois).
+    "Quinta ou quinta feira" é o mesmo dia repetido: devolve só a entrada.
+    """
+    found: list[int] = []
+    for match in _RE_WEEKDAY.finditer(_norm(text)):
+        weekday = _WEEKDAYS.get(match.group(1))
+        if weekday is not None and weekday not in found:
+            found.append(weekday)
+    if not found:
+        return None, None
+
+    checkin = today + timedelta(days=(found[0] - today.weekday()) % 7)
+    if len(found) < 2:
+        return checkin, None
+
+    delta = (found[1] - found[0]) % 7 or 7
+    return checkin, checkin + timedelta(days=delta)
+
+
 def extract_dates(text: str, today: date) -> tuple[date | None, date | None]:
     """Devolve (checkin, checkout) a partir de linguagem natural."""
     t = _norm(text)
@@ -205,6 +247,11 @@ def extract_dates(text: str, today: date) -> tuple[date | None, date | None]:
             if a and b and b > a:
                 return a, b
         return textual[0], None
+
+    # Dias da semana ("quinta", "de sexta a domingo")
+    weekday_in, weekday_out = extract_weekdays(text, today)
+    if weekday_in is not None:
+        return weekday_in, weekday_out
 
     # Relativos (amanhã, hoje, depois de amanhã)
     for keyword, offset in _RE_RELATIVE:

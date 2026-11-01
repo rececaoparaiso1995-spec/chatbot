@@ -319,6 +319,74 @@ class TestFechoEFormato(Base):
         self.assertGreater(first, villa.base_rate)
 
 
+class TestDiasDaSemana(unittest.TestCase):
+    """Datas dadas por dia da semana (domingo, 1 de novembro de 2026)."""
+
+    TODAY = date(2026, 11, 1)
+
+    def test_quinta_sozinha_e_variantes(self) -> None:
+        for text in ("quinta", "quinta-feira", "quinta feira", "QUINTA-FEIRA", "na quinta"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    nlu.extract_dates(text, self.TODAY), (date(2026, 11, 5), None)
+                )
+
+    def test_intervalo_de_quinta_a_domingo(self) -> None:
+        self.assertEqual(
+            nlu.extract_dates("de quinta a domingo", self.TODAY),
+            (date(2026, 11, 5), date(2026, 11, 8)),
+        )
+
+    def test_entrar_quinta_e_sair_domingo(self) -> None:
+        parsed = nlu.parse("queria entrar quinta e sair domingo", today=self.TODAY)
+        self.assertEqual(parsed.checkin, date(2026, 11, 5))
+        self.assertEqual(parsed.checkout, date(2026, 11, 8))
+        self.assertEqual(parsed.nights, 3)
+        self.assertEqual(parsed.intent, "availability")
+
+    def test_hoje_e_domingo_entao_domingo_e_hoje(self) -> None:
+        self.assertEqual(
+            nlu.extract_dates("domingo", self.TODAY), (date(2026, 11, 1), None)
+        )
+
+    def test_sabado_e_daqui_a_seis_dias(self) -> None:
+        self.assertEqual(
+            nlu.extract_dates("sabado", self.TODAY), (date(2026, 11, 7), None)
+        )
+
+    def test_outros_idiomas(self) -> None:
+        esperado = (date(2026, 11, 6), date(2026, 11, 8))
+        for text in ("from friday to sunday", "del viernes al domingo", "vendredi"):
+            with self.subTest(text=text):
+                got = nlu.extract_dates(text, self.TODAY)
+                if text == "vendredi":
+                    self.assertEqual(got[0], date(2026, 11, 6))
+                else:
+                    self.assertEqual(got, esperado)
+
+    def test_data_explicita_ganha_ao_dia_da_semana(self) -> None:
+        parsed = nlu.parse("quinta, 20 de dezembro", today=self.TODAY)
+        self.assertEqual(parsed.checkin, date(2026, 12, 20))
+
+
+class TestDiasDaSemanaNoMotor(Base):
+    def test_entrar_quinta_e_sair_domingo_nao_pede_noites(self) -> None:
+        text = "\n".join(
+            o.text
+            for o in self.engine.handle(
+                self.phone, "queria entrar quinta e sair domingo para 2 pessoas"
+            )
+        )
+        self.assertNotIn("quantas noites", text.lower())
+        self.assertNotIn("não compreendi", text.lower())
+
+    def test_dia_da_semana_como_resposta_as_noites(self) -> None:
+        self.engine.handle(self.phone, "quinta")
+        text = "\n".join(o.text for o in self.engine.handle(self.phone, "domingo"))
+        self.assertNotIn("quantas noites", text.lower())
+        self.assertNotIn("não compreendi", text.lower())
+
+
 class TestContextoPersistente(Base):
     """O contexto guardado na base de dados sobrevive a reiniciar a app."""
 
