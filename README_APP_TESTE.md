@@ -100,7 +100,7 @@ Disponibilidade e preços (sem navegador)** há uma única escolha:
 
 | Interruptor | O que a app faz |
 |---|---|
-| **Ligado** | Lê `data/teste_app/disponibilidade.csv` (ou o caminho indicado) e responde com preços e disponibilidade reais desse ficheiro. |
+| **Ligado** | Lê `data/teste_app/disponibilidade.csv` (ou o caminho indicado) e responde com preços e disponibilidade reais desse ficheiro. Se o ficheiro não cobrir as datas (ou estiver em falta), avisa e recolhe na mesma os dados para a receção — o pedido não se perde. |
 | **Desligado** (por defeito) | Não consulta nada. **Recolhe os dados um a um** e só no fim regista o pedido e avisa que a receção responde ao abrir. Nunca apresenta valores. |
 
 O cabeçalho da janela mostra sempre qual está ativo: `PREÇOS: FICHEIRO LOCAL`
@@ -306,7 +306,7 @@ calibrada no PC real — os seletores estão todos em
 py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
-69 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
+71 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
 orçamento com preço por noite, alternativas, falha do PMS sem invenção,
 fluxo de reserva completo e parcial, fecho de turno, formatação de preços,
 retenção, as duas vias do interruptor de disponibilidade, a reaproveitação do

@@ -530,9 +530,10 @@ class Engine:
             offers = source.quote(parsed.checkin, nights, adults, children, meal, villa)
         except availability.AvailabilityError as exc:
             log.warning("Disponibilidade indisponível: %s", exc)
-            return [
-                self._text(phone, templates.t(lang, "cannot_confirm"), escalate=True)
-            ]
+            # O ficheiro falhou ou não cobre estas datas: não se perde o pedido.
+            # Avisa-se o cliente e recolhem-se os dados em falta para a receção.
+            aviso = self._text(phone, templates.t(lang, "cannot_confirm"), escalate=True)
+            return [aviso] + self._register_request(session, parsed, lang, nights)
 
         if not offers:
             message = templates.t(
@@ -919,6 +920,10 @@ class Engine:
             # Sem preços: registar a intenção e remeter para a receção.
             return self._register_request(session, parsed, lang)
         if session.last_offer is None:
+            # Sem orçamento na conversa, mas com datas na mensagem: seguir por
+            # ali em vez de voltar a pedi-las.
+            if parsed.has_dates:
+                return self._handle_quote(session, parsed, lang)
             session.want_booking = True
             return [self._text(phone, templates.t(lang, "booking_wait_dates"))]
 

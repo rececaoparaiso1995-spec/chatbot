@@ -808,6 +808,47 @@ class TestDisponibilidadePorFicheiro(unittest.TestCase):
         self.assertIn("receção", text.lower())
         self.assertNotIn("€", text)
 
+    def test_sem_cobertura_nao_perde_o_pedido_de_reserva(self) -> None:
+        self.write_csv(days=3)
+        self.cfg.use_availability_file = True
+        self.cfg.availability_file = str(self.csv)
+        engine = self.engine()
+        far = date.today() + timedelta(days=200)
+        checkout = far + timedelta(days=3)
+
+        first = "\n".join(
+            o.text
+            for o in engine.handle(
+                self.phone,
+                f"queria reservar de {far.strftime('%d/%m/%Y')} a "
+                f"{checkout.strftime('%d/%m/%Y')} para 2 pessoas",
+            )
+        )
+        self.assertIn("não consigo confirmar", first.lower())
+        self.assertIn("pequeno-almoço", first.lower())
+
+        engine.handle(self.phone, "sem pequeno-almoço")
+        out = engine.handle(self.phone, "Ana Silva")
+        text = "\n".join(o.text for o in out)
+        self.assertIn("registei o seu pedido", text.lower())
+        self.assertEqual(len(self.store.bookings()), 1)
+
+    def test_pedido_com_datas_nao_volta_a_pedir_datas(self) -> None:
+        self.write_csv()
+        self.cfg.use_availability_file = True
+        self.cfg.availability_file = str(self.csv)
+        day = self.checkin
+        text = "\n".join(
+            o.text
+            for o in self.engine().handle(
+                self.phone,
+                f"queria reservar de {day.strftime('%d/%m/%Y')} a "
+                f"{(day + timedelta(days=2)).strftime('%d/%m/%Y')} para 2 pessoas",
+            )
+        )
+        self.assertNotIn("indique por favor as datas", text.lower())
+        self.assertIn("€", text)
+
     def test_ficheiro_em_falta_tambem_vai_para_a_rececao(self) -> None:
         self.cfg.use_availability_file = True
         self.cfg.availability_file = str(self.dir / "nao_existe.csv")
