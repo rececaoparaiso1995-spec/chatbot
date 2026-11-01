@@ -117,6 +117,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "thanks": "Ao seu dispor! Bom descanso. 🌙",
         "greeting": "Boa noite! Em que posso ajudar?",
         "doc_found": "Sobre {topic}:\n{excerpt}",
+        "doc_topics": (
+            "Tenho informação sobre: {topics}. Sobre qual quer saber mais?"
+        ),
         "field_name": "nome",
         "field_email": "email",
         "field_dates": "datas de entrada e saída",
@@ -206,6 +209,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "thanks": "My pleasure! Sleep well. 🌙",
         "greeting": "Good evening! How can I help?",
         "doc_found": "About {topic}:\n{excerpt}",
+        "doc_topics": (
+            "I have information about: {topics}. Which one would you like to know "
+            "more about?"
+        ),
         "field_name": "name",
         "field_email": "email",
         "field_dates": "arrival and departure dates",
@@ -295,6 +302,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "thanks": "¡A su disposición! Buenas noches. 🌙",
         "greeting": "¡Buenas noches! ¿En qué puedo ayudar?",
         "doc_found": "Sobre {topic}:\n{excerpt}",
+        "doc_topics": (
+            "Tengo información sobre: {topics}. ¿Sobre cuál quiere saber más?"
+        ),
         "field_name": "nombre",
         "field_email": "correo electrónico",
         "field_dates": "fechas de entrada y salida",
@@ -385,6 +395,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "thanks": "Je vous en prie ! Bonne nuit. 🌙",
         "greeting": "Bonsoir ! Comment puis-je vous aider ?",
         "doc_found": "À propos de {topic} :\n{excerpt}",
+        "doc_topics": (
+            "J'ai des informations sur : {topics}. Sur lequel souhaitez-vous en "
+            "savoir plus ?"
+        ),
         "field_name": "nom",
         "field_email": "e-mail",
         "field_dates": "dates d'arrivée et de départ",

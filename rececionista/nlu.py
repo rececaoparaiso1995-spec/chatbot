@@ -484,8 +484,9 @@ _INTENT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("doc_request", (
         "spa", "massagem", "massage", "restaurante", "restaurant", "carta",
         "menu", "pequeno-almoco", "politica", "cancelamento", "cancellation",
-        "horario", "wifi", "estacionamento", "parking", "piscina", "pool",
-        "transfer", "praia", "beach", "ginasio", "gym",
+        "horario", "horas", "wifi", "wi-fi", "estacionamento", "parking", "piscina", "pool",
+        "transfer", "praia", "beach", "ginasio", "gym", "check-in", "checkin",
+        "check-out", "checkout",
     )),
     ("availability", (
         "disponibilidade", "disponivel", "availability", "available", "preco",
@@ -542,6 +543,14 @@ def parse(text: str, today: date, default_language: str = "pt") -> Parsed:
         if any(k in t for k in keywords):
             intent = name
             break
+    # Pedidos de informação genéricos ("que informações têm?", "o que têm
+    # disponível?") só viram pedido de documento se mais nada foi reconhecido,
+    # para não roubarem uma pergunta sobre datas ou preços.
+    if intent == "unclear" and any(
+        key in t
+        for key in ("informac", "informacion", "information", "o que tem", "servicos")
+    ):
+        intent = "doc_request"
     # Datas explícitas sobem a intenção para disponibilidade
     if checkin and intent in {"unclear", "greeting", "thanks"}:
         intent = "availability"

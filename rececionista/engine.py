@@ -23,7 +23,7 @@ import re
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from . import availability, llm, nlu, settings, templates
+from . import availability, docs, errors, llm, nlu, settings, templates
 from .fake_pms import VILLAS
 from .models import (
     BookingDraft,
@@ -256,7 +256,7 @@ class Engine:
         elif parsed.intent == "photo_request":
             out += self._handle_photos(session, parsed, lang)
         elif parsed.intent == "doc_request":
-            out += self._handle_docs(parsed, lang)
+            out += self._handle_docs(session, parsed, lang)
         elif parsed.intent == "cancel_change":
             out += self._escalate(phone, lang)
         elif parsed.intent == "greeting":
@@ -880,33 +880,40 @@ class Engine:
             )
         ]
 
-    def _handle_docs(self, parsed: nlu.Parsed, lang: str) -> list[Outbound]:
-        topic_words = [
-            nlu.strip_accents(w) for w in re.findall(r"\w+", parsed.raw.lower()) if len(w) > 3
-        ]
-        best: tuple[int, str, Path] | None = None
-        for path in settings.DOCS_DIR.rglob("*"):
-            if path.suffix.lower() not in {".txt", ".md"}:
-                continue
-            try:
-                content = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            lowered = nlu.strip_accents(content.lower())
-            score = sum(1 for word in topic_words if word in lowered)
-            if score and (best is None or score > best[0]):
-                best = (score, content, path)
+    def _handle_docs(
+        self, session: Session, parsed: nlu.Parsed, lang: str
+    ) -> list[Outbound]:
+        """Responde com o documento do hotel que melhor corresponde à pergunta."""
+        phone = session.phone
+        created = docs.ensure_samples(settings.DOCS_DIR)
+        if created and self.store:
+            self.store.log_event(
+                "INFO",
+                "docs",
+                "Documentos de exemplo criados: "
+                + ", ".join(p.name for p in created),
+            )
 
-        if best is None:
-            return self._escalate("", lang, session_phone=None)
+        hit = docs.search(settings.DOCS_DIR, parsed.raw)
+        if hit is None:
+            # Sem correspondência: oferecer os temas em vez de encerrar a
+            # conversa com "passo à receção".
+            available = docs.topics(settings.DOCS_DIR)
+            if not available:
+                return self._escalate(phone, lang)
+            return [
+                self._text(
+                    phone, templates.t(lang, "doc_topics", topics=", ".join(available))
+                )
+            ]
 
-        excerpt = best[1].strip().replace("\n\n", "\n")[:600]
-        first_line = next((line.strip() for line in best[1].splitlines() if line.strip()), "")
-        topic = first_line if 3 < len(first_line) <= 80 else best[2].stem.replace("_", " ")
+        excerpt = hit.body.strip().replace("\n\n", "\n")
         return [
             Outbound(
-                text=templates.t(lang, "doc_found", topic=topic, excerpt=excerpt),
-                meta={"source": str(best[2])},
+                kind="text",
+                text=templates.t(lang, "doc_found", topic=hit.title, excerpt=excerpt),
+                phone=phone,
+                meta={"source": str(hit.path)},
             )
         ]
 
@@ -1182,6 +1189,7 @@ class Engine:
             self.store.save_session_state(session.phone, payload)
         except Exception as exc:  # pragma: no cover - não pode quebrar a resposta
             log.warning("Não foi possível guardar o contexto: %s", exc)
+            errors.report("engine", f"Contexto da conversa não guardado: {exc}")
 
     def _text(
         self,

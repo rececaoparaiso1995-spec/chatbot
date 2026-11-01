@@ -8,12 +8,14 @@ depois de fechados.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
+from . import errors
 from .models import BookingRecord
 from .phones import normalize_phone
 
@@ -83,13 +85,16 @@ class Store:
     ) -> None:
         stamp = (created_at or datetime.now()).isoformat(timespec="seconds")
         phone = normalize_phone(phone)
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO messages (phone, direction, body, language, intent, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (phone, direction, body, language, intent, stamp),
-            )
-            self._conn.commit()
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO messages (phone, direction, body, language, intent, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (phone, direction, body, language, intent, stamp),
+                )
+                self._conn.commit()
+        except sqlite3.Error as exc:
+            errors.report("store", f"Não foi possível guardar a mensagem ({phone}): {exc}")
 
     def conversation(self, phone: str, limit: int = 200) -> list[sqlite3.Row]:
         phone = normalize_phone(phone)
@@ -110,14 +115,17 @@ class Store:
     ) -> None:
         phone = normalize_phone(phone)
         stamp = (at or datetime.now()).isoformat(timespec="seconds")
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO sessions(phone, payload, updated_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(phone) DO UPDATE SET "
-                "payload = excluded.payload, updated_at = excluded.updated_at",
-                (phone, payload, stamp),
-            )
-            self._conn.commit()
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO sessions(phone, payload, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(phone) DO UPDATE SET "
+                    "payload = excluded.payload, updated_at = excluded.updated_at",
+                    (phone, payload, stamp),
+                )
+                self._conn.commit()
+        except sqlite3.Error as exc:
+            errors.report("store", f"Não foi possível guardar o contexto ({phone}): {exc}")
 
     def load_session_state(self, phone: str) -> tuple[str, datetime] | None:
         """Devolve (payload, última atualização), ou None se não existir."""
@@ -155,6 +163,16 @@ class Store:
 
     def save_booking(self, record: BookingRecord) -> int:
         now = datetime.now().isoformat(timespec="seconds")
+        try:
+            return self._save_booking_locked(record, now)
+        except sqlite3.Error as exc:
+            errors.report(
+                "store",
+                f"PEDIDO NÃO GRAVADO ({record.name or record.phone}): {exc}",
+            )
+            return 0
+
+    def _save_booking_locked(self, record: BookingRecord, now: str) -> int:
         with self._lock:
             if record.id:
                 self._conn.execute(
@@ -197,24 +215,35 @@ class Store:
             return self._conn.execute(query, params).fetchall()
 
     def set_booking_status(self, booking_id: int, status: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?",
-                (status, datetime.now().isoformat(timespec="seconds"), booking_id),
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?",
+                    (status, datetime.now().isoformat(timespec="seconds"), booking_id),
+                )
+                self._conn.commit()
+        except sqlite3.Error as exc:
+            errors.report(
+                "store", f"Não foi possível mudar o estado do pedido #{booking_id}: {exc}"
             )
-            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Eventos
     # ------------------------------------------------------------------
 
     def log_event(self, level: str, module: str, message: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO events (level, module, message, created_at) VALUES (?,?,?,?)",
-                (level, module, message, datetime.now().isoformat(timespec="seconds")),
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO events (level, module, message, created_at) VALUES (?,?,?,?)",
+                    (level, module, message, datetime.now().isoformat(timespec="seconds")),
+                )
+                self._conn.commit()
+        except sqlite3.Error as exc:
+            # Não se reporta de volta para o registo (seria um ciclo).
+            logging.getLogger("rececionista.store").error(
+                "Evento não gravado (%s/%s): %s", level, module, exc
             )
-            self._conn.commit()
 
     def events(self, limit: int = 300) -> list[sqlite3.Row]:
         with self._lock:
@@ -233,20 +262,24 @@ class Store:
             timespec="seconds"
         )
         removed = 0
-        with self._lock:
-            for table in ("messages", "events"):
+        try:
+            with self._lock:
+                for table in ("messages", "events"):
+                    cur = self._conn.execute(
+                        f"DELETE FROM {table} WHERE created_at < ?", (cutoff,)
+                    )
+                    removed += cur.rowcount or 0
                 cur = self._conn.execute(
-                    f"DELETE FROM {table} WHERE created_at < ?", (cutoff,)
+                    "DELETE FROM bookings WHERE status IN ('confirmed','cancelled')"
+                    " AND updated_at < ?",
+                    (booking_cutoff,),
                 )
                 removed += cur.rowcount or 0
-            cur = self._conn.execute(
-                "DELETE FROM bookings WHERE status IN ('confirmed','cancelled')"
-                " AND updated_at < ?",
-                (booking_cutoff,),
-            )
-            removed += cur.rowcount or 0
-            self._conn.execute("DELETE FROM sessions WHERE updated_at < ?", (cutoff,))
-            self._conn.commit()
+                self._conn.execute("DELETE FROM sessions WHERE updated_at < ?", (cutoff,))
+                self._conn.commit()
+        except sqlite3.Error as exc:
+            errors.report("store", f"A limpeza de dados antigos falhou: {exc}")
+            return removed
         return removed
 
     def close(self) -> None:

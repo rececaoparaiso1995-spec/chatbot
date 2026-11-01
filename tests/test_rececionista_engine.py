@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rececionista import llm, nlu, settings, templates
+from rececionista import errors, llm, nlu, settings, templates
 from rececionista.engine import Engine, in_window, normalize_phone, same_number
 from rececionista.fake_pms import BLACKOUTS, FictitiousPMS, VILLAS
 from rececionista.store import Store
@@ -317,6 +317,103 @@ class TestFechoEFormato(Base):
         second = self.pms.nightly_price(villa, day, "BB", 2)
         self.assertEqual(first, second)
         self.assertGreater(first, villa.base_rate)
+
+
+class TestDocumentosDoHotel(unittest.TestCase):
+    """Perguntas informativas respondidas a partir dos ficheiros .txt."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.docs_dir = Path(self.tmp.name) / "docs"
+        self.previous = settings.DOCS_DIR
+        settings.DOCS_DIR = self.docs_dir
+
+        self.store = Store(Path(self.tmp.name) / "teste.db")
+        self.cfg = settings.AppConfig()
+        self.cfg.mode = settings.MODE_TESTE
+        self.cfg.test_numbers = ["+351900000001"]
+        self.cfg.send_acknowledgement = False
+        self.engine = Engine(self.cfg, store=self.store)
+        self.phone = "+351900000001"
+
+    def tearDown(self) -> None:
+        settings.DOCS_DIR = self.previous
+        self.store.close()
+        self.tmp.cleanup()
+
+    def reply(self, text: str) -> str:
+        return "\n".join(o.text for o in self.engine.handle(self.phone, text))
+
+    def test_cria_documentos_de_exemplo_quando_faltam(self) -> None:
+        self.assertTrue(self.reply("que informações têm sobre o spa?"))
+        criados = sorted(p.name for p in self.docs_dir.glob("*.txt"))
+        self.assertIn("spa_horarios.txt", criados)
+        self.assertIn("servicos_gerais.txt", criados)
+        self.assertGreaterEqual(len(criados), 4)
+
+    def test_nao_substitui_documentos_existentes(self) -> None:
+        self.docs_dir.mkdir(parents=True)
+        proprio = self.docs_dir / "spa_horarios.txt"
+        proprio.write_text("Spa\nAberto das 08h00 às 22h00.\n", encoding="utf-8")
+        self.reply("que informações têm sobre o spa?")
+        self.assertIn("08h00", proprio.read_text(encoding="utf-8"))
+
+    def test_horario_do_spa(self) -> None:
+        text = self.reply("que informações têm sobre o spa?")
+        self.assertIn("10h00", text)
+        self.assertIn("massage", text.lower())
+        self.assertNotIn("encaminhar", text.lower())
+
+    def test_wifi_e_estacionamento(self) -> None:
+        text = self.reply("têm wifi e estacionamento?")
+        self.assertIn("wi-fi", text.lower())
+        self.assertIn("estacionamento", text.lower())
+
+    def test_check_in_pelas_horas(self) -> None:
+        text = self.reply("a que horas é o check-in?")
+        self.assertIn("15h00", text)
+
+    def test_menu_do_restaurante(self) -> None:
+        text = self.reply("qual é o menu do restaurante?")
+        self.assertIn("jantar", text.lower())
+
+    def test_pergunta_generica_lista_temas(self) -> None:
+        text = self.reply("queria informações")
+        self.assertIn("tenho informa", text.lower())
+        self.assertIn("spa", text.lower())
+        self.assertNotIn("encaminhar", text.lower())
+
+    def test_pergunta_sem_correspondencia_lista_temas(self) -> None:
+        text = self.reply("têm informações sobre helicópteros?")
+        self.assertIn("tenho informa", text.lower())
+
+
+class TestErrosDeGravacao(unittest.TestCase):
+    def test_falha_ao_gravar_pedido_nao_passa_em_silencio(self) -> None:
+        errors.clear()
+        tmp = tempfile.TemporaryDirectory()
+        store = Store(Path(tmp.name) / "teste.db")
+        cfg = settings.AppConfig()
+        cfg.mode = settings.MODE_TESTE
+        cfg.test_numbers = ["+351900000001"]
+        cfg.use_availability_file = False
+        engine = Engine(cfg, store=store)
+
+        # Base fechada: toda a escrita falha a partir daqui.
+        store.close()
+        outs = engine.handle(
+            "+351900000001", "queria reservar de 20 a 23 de dezembro para 2 pessoas"
+        )
+        self.assertTrue(outs)  # a conversa continua
+        engine.handle("+351900000001", "com pequeno-almoço")
+        engine.handle("+351900000001", "Ana Silva")
+
+        registadas = [msg for _, _, msg in errors.drain()]
+        self.assertTrue(
+            any("PEDIDO NÃO GRAVADO" in m for m in registadas), registadas
+        )
+        store.close()
+        tmp.cleanup()
 
 
 class TestDiasDaSemana(unittest.TestCase):

@@ -246,6 +246,45 @@ Ollama for antigo, atualize-o a partir do site.
 - No simulador aparece *"A interpretar com o modelo local…"* enquanto se espera
   — a janela não bloqueia (a chamada corre fora do thread da interface).
 
+### Documentos do hotel (horários, cartas, preços)
+
+As perguntas informativas são respondidas a partir dos ficheiros de texto em
+`data/teste_app/docs/`. Não há base de dados nem API: a app procura o ficheiro
+que melhor corresponde à pergunta e responde com o conteúdo.
+
+| Ficheiro | Responde a perguntas sobre |
+|---|---|
+| `spa_horarios.txt` | horário do spa, preços das massagens, circuito de águas |
+| `restaurante_carta.txt` | horários das refeições, menus, opções vegetarianas |
+| `politicas_cancelamento.txt` | prazos e custos de cancelamento |
+| `servicos_gerais.txt` | check-in/out, wi-fi, estacionamento, piscina, ginásio, transfer, praia |
+
+Se o ficheiro não existir, a app **cria um de exemplo** (conteúdo fictício,
+valores de teste) sem tocar nos que já existem. Para usar os dados reais, basta
+editar o texto — não é preciso reiniciar nem recompilar.
+
+```
+Cliente: que informações têm sobre o spa?
+Bot    : Sobre Spa — horários e serviços:
+         Horário: todos os dias, das 10h00 às 20h00.
+         Massagens: 50 minutos — 65 €; 80 minutos — 95 €…
+
+Cliente: têm wifi e estacionamento?
+Bot    : Sobre Serviços gerais — Paraíso Villas & Spa:
+         Check-in: a partir das 15h00. Wi-fi: gratuito…
+```
+
+Se a pergunta não corresponder a nenhum documento (*"queria informações"*, ou
+um assunto que não existe), a app **lista os temas que tem** em vez de encerrar
+a conversa com "passo à receção". Só escala quando não há documento nenhum.
+
+### Falhas de gravação
+
+Se uma escrita na base de dados falhar (ficheiro bloqueado, disco cheio), a
+conversa continua e o erro aparece no separador **Registos** com nível `ERROR`
+(ex.: `PEDIDO NÃO GRAVADO (Ana Silva): database is locked`), acompanhado de um
+aviso no chat. Uma falha de gravação nunca passa em silêncio.
+
 ## 4. Testar no WhatsApp Web
 
 1. No painel direito, **Abrir WhatsApp Web (Chrome)**.
@@ -281,6 +320,8 @@ calibrada no PC real — os seletores estão todos em
 | Alternativas ±7 dias, máximo 3, mesmo nº de hóspedes | ✅ |
 | Nunca inventa: ficheiro em falta, ilegível ou sem cobertura → receção | ✅ |
 | Recolha de pedido de reserva em passos + estado `pending`/`incomplete` | ✅ |
+| Respostas informativas a partir de `docs/*.txt` (spa, restaurante, políticas, serviços) | ✅ |
+| Falhas de gravação na base de dados visíveis no separador Registos | ✅ |
 | Resposta nunca confirma a reserva | ✅ |
 | Templates multilingues (introdução como assistente virtual incluída) | ✅ |
 | SQLite: conversas, pedidos, eventos + purga aos 7 dias | ✅ |
@@ -306,7 +347,7 @@ calibrada no PC real — os seletores estão todos em
 py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
-71 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
+80 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
 orçamento com preço por noite, alternativas, falha do PMS sem invenção,
 fluxo de reserva completo e parcial, fecho de turno, formatação de preços,
 retenção, as duas vias do interruptor de disponibilidade, a reaproveitação do
@@ -338,7 +379,9 @@ rececionista/
 
 ## 9. Dados de teste
 
-- Documentos: `data/teste_app/docs/*.txt` (spa, restaurante, políticas).
+- Documentos: `data/teste_app/docs/*.txt` — spa, restaurante, políticas de
+  cancelamento e serviços gerais. São **de teste** e criados automaticamente se
+  faltarem; substitua o conteúdo pelos horários e preços reais (ver secção 3).
 - Fotografias: `data/teste_app/photos/T0|T1|T2/` — substitua os PNGs
   provisórios pelas fotografias reais.
 - Base de dados: `data/teste_app/teste.db`.

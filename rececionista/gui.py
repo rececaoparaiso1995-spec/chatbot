@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import availability, llm, settings
+from . import availability, errors, llm, settings
 from .engine import Engine, normalize_phone
 from .store import Store, export_bookings_csv
 from .transport.simulator import SimulatorTransport
@@ -73,6 +73,9 @@ class RecepcionistaApp(tk.Tk):
         self.transport: WhatsAppWebTransport | None = None
         self.inbox: queue.Queue = queue.Queue()
         self.last_outbound: list = []
+        # Falhas de gravação mostradas no separador Registos mesmo quando a
+        # própria base de dados é o problema.
+        self.runtime_errors: list[str] = []
 
         self._build()
         self._apply_mode()
@@ -608,6 +611,7 @@ class RecepcionistaApp(tk.Tk):
             self.transport.set_auto_poll(self.cfg.whatsapp_auto_poll)
 
     def _tick(self) -> None:
+        self._drain_errors()
         try:
             while True:
                 item = self.inbox.get_nowait()
@@ -703,11 +707,28 @@ class RecepcionistaApp(tk.Tk):
     def _refresh_logs(self) -> None:
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
+        for line in self.runtime_errors[-50:]:
+            self.log_text.insert("end", line + "\n")
         for row in self.store.events(limit=200):
             self.log_text.insert(
                 "end", f"[{row['created_at']}] {row['level']:7s} {row['module']:12s} {row['message']}\n"
             )
         self.log_text.configure(state="disabled")
+
+    def _drain_errors(self) -> None:
+        """Passa para o separador Registos as falhas de gravação acumuladas."""
+        new = errors.drain()
+        if not new:
+            return
+        for when, module, message in new:
+            line = f"[{when.isoformat(sep=' ', timespec='seconds')}] {'ERROR':7s} {module:12s} {message}"
+            self.runtime_errors.append(line)
+            log.error("%s: %s", module, message)
+        self._refresh_logs()
+        self._system(
+            "Erro ao gravar na base de dados — ver separador Registos "
+            f"({len(new)} ocorrência(s))."
+        )
 
     # ------------------------------------------------------------------
     # Configuração / utilitários
