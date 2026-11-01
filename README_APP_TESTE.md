@@ -189,6 +189,13 @@ Ollama for antigo, atualize-o a partir do site.
 - Referências à conversa anterior — *"e se ficássemos só duas noites?"* —
   reaproveitam a entrada do último orçamento **sem** chamar o modelo (é lógica
   de sessão, determinística).
+- Respostas curtas a uma pergunta da app — depois de *"Quantas noites pretende
+  ficar?"*, responder apenas `2` (ou `2 noites`) **completa** o pedido com as
+  datas já dadas, em vez de voltar ao início. Isto também é lógica de sessão,
+  não do modelo: a consulta pendente vale 30 minutos.
+- Se o modelo não ajudar, o **separador Registos** mostra o motivo
+  (`Modelo não ajudou: Ollama inacessível…`, `JSON inválido…`). Antes, uma
+  falha do modelo era indistinguível de "as regras também não perceberam".
 - Nada disto permite ao modelo inventar preços: se não houver cotação no
   ficheiro, a resposta continua a ser a de indisponibilidade/receção.
 - No simulador aparece *"A interpretar com o modelo local…"* enquanto se espera
@@ -254,11 +261,12 @@ calibrada no PC real — os seletores estão todos em
 py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
-48 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
+51 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
 orçamento com preço por noite, alternativas, falha do PMS sem invenção,
 fluxo de reserva completo e parcial, fecho de turno, formatação de preços,
 retenção, as duas vias do interruptor de disponibilidade, a reaproveitação do
-contexto da conversa e o cliente do modelo local (com um Ollama falso: JSON com
+contexto da conversa ("2" depois de "quantas noites?", "só duas noites") e o
+cliente do modelo local (com um Ollama falso: JSON com
 markdown, lixo, valores fora do domínio, datas no passado, serviço em falta).
 Nenhum teste precisa de Ollama, Playwright, Internet ou Newhotel.
 

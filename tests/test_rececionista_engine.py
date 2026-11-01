@@ -411,6 +411,35 @@ class TestContextoDaConversa(Base):
         self.assertIn(templates.dmy(day), second)
         self.assertNotIn("datas de entrada e saída", second.lower())
 
+    def test_responder_2_a_pergunta_das_noites_completa_o_pedido(self) -> None:
+        day = self.find_available(nights=2)
+        first = "\n".join(
+            o.text
+            for o in self.engine.handle(
+                self.phone,
+                f"queria saber a disponibilidade para {day.strftime('%d/%m/%Y')} "
+                "para 2 pessoas",
+            )
+        )
+        self.assertIn("quantas noites", first.lower())
+
+        second = "\n".join(o.text for o in self.engine.handle(self.phone, "2"))
+        self.assertIn("€", second)
+        self.assertIn(templates.dmy(day), second)
+
+    def test_noites_por_extenso_tambem_completa_o_pedido(self) -> None:
+        day = self.find_available(nights=2)
+        self.engine.handle(
+            self.phone,
+            f"disponibilidade para {day.strftime('%d/%m/%Y')} para 2 pessoas",
+        )
+        text = "\n".join(o.text for o in self.engine.handle(self.phone, "2 noites"))
+        self.assertIn("€", text)
+
+    def test_numero_solto_sem_consulta_pendente_nao_e_noites(self) -> None:
+        text = "\n".join(o.text for o in self.engine.handle(self.phone, "2"))
+        self.assertNotIn("€", text)
+
     def test_sem_orcamento_anterior_pede_datas(self) -> None:
         text = "\n".join(o.text for o in self.engine.handle(self.phone, "e 2 noites?"))
         self.assertIn("datas", text.lower())

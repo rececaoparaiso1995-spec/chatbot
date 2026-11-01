@@ -132,11 +132,16 @@ class Engine:
         parsed = nlu.parse(text, today=now.date(), default_language=self.cfg.default_language)
         session = self._session(phone)
 
+        # Contexto primeiro: uma resposta como "2" a "quantas noites?" resolve-se
+        # com o que já está na sessão, sem gastar uma chamada ao modelo.
+        parsed = self._apply_session_context(session, parsed)
         # As regras resolvem a maioria das mensagens. Só quando não percebem
         # nada é que o modelo local é consultado (custa alguns segundos).
-        if self.cfg.use_llm:
+        if self.cfg.use_llm and parsed.intent == "unclear":
             parsed = self._assist_with_llm(session, text, parsed, now)
-        parsed = self._apply_session_context(session, parsed)
+            # O modelo pode trazer as noites que as regras não leram: completar
+            # a consulta pendente com o que ele devolveu.
+            parsed = self._apply_session_context(session, parsed)
 
         lang = parsed.language or session.language or self.cfg.default_language
         session.language = lang
@@ -241,24 +246,54 @@ class Engine:
         return turns
 
     def _apply_session_context(self, session: Session, parsed: nlu.Parsed) -> nlu.Parsed:
-        """Completa uma mensagem curta com as datas da consulta anterior.
+        """Completa uma resposta curta com o que já se sabe desta conversa.
 
-        "E se ficássemos só duas noites?" não traz datas: aproveita-se a
-        entrada do último orçamento desta conversa em vez de voltar a pedi-las.
+        Dois casos reais:
+          * a app perguntou "quantas noites?" e o cliente respondeu "2" —
+            as datas já tinham sido dadas e estavam guardadas;
+          * "e se ficássemos só duas noites?" depois de um orçamento —
+            aproveita-se a entrada desse orçamento.
         """
-        if parsed.checkin is not None or session.last_offer is None:
-            return parsed
-        if not parsed.nights or parsed.nights <= 0:
+        if parsed.checkin is not None:
             return parsed
 
+        pending = session.pending_quote
+        if pending is not None and pending.get("at") is not None:
+            age = datetime.now() - pending["at"]
+            if age > timedelta(minutes=30):
+                session.pending_quote = pending = None
         base = session.last_offer
-        checkin = base.checkin
-        nights = parsed.nights
-        if checkin < date.today():
+        if pending is None and base is None:
             return parsed
+
+        nights = parsed.nights or 0
+        if nights <= 0 and pending is not None:
+            # Resposta a "quantas noites?": um número solto ("2", "3 noites").
+            bare = re.sub(r"\D", "", parsed.raw or "")
+            if bare and len(bare) <= 2 and 1 <= int(bare) <= 60:
+                nights = int(bare)
+        if nights <= 0:
+            return parsed
+
+        if pending is not None:
+            checkin = pending["checkin"]
+            adults = parsed.adults or pending.get("adults") or 2
+            children = parsed.children or pending.get("children") or 0
+            meal = parsed.meal or pending.get("meal")
+            villa = parsed.villa or pending.get("villa")
+        else:
+            assert base is not None
+            checkin = base.checkin
+            adults, children = base.adults, base.children
+            meal, villa = base.meal, base.villa.code
+
+        if not isinstance(checkin, date) or checkin < date.today():
+            return parsed
+
+        session.pending_quote = None
         log.info(
-            "Contexto: %s noite(s) aplicadas à entrada de %s (último orçamento)",
-            nights, checkin,
+            "Contexto: %s noite(s) aplicadas à entrada de %s (%s)",
+            nights, checkin, "consulta pendente" if pending else "último orçamento",
         )
         return nlu.Parsed(
             raw=parsed.raw,
@@ -267,10 +302,10 @@ class Engine:
             checkin=checkin,
             checkout=checkin + timedelta(days=nights),
             nights=nights,
-            adults=parsed.adults or base.adults,
-            children=parsed.children or base.children,
-            meal=parsed.meal or base.meal,
-            villa=parsed.villa or base.villa.code,
+            adults=adults,
+            children=children,
+            meal=meal,
+            villa=villa,
             email=parsed.email,
             phone=parsed.phone,
             name=parsed.name,
@@ -296,6 +331,13 @@ class Engine:
             text, today=now.date(), history=self._history(session)
         )
         if result is None or not result.is_useful():
+            # Visível no separador Registos: sem isto, uma falha do modelo é
+            # indistinguível de "as regras também não perceberam".
+            reason = getattr(client, "last_error", "") or (
+                "o modelo respondeu, mas sem informação útil"
+            )
+            if self.store:
+                self.store.log_event("WARNING", "llm", f"Modelo não ajudou: {reason}")
             return parsed
 
         checkin = parsed.checkin or result.checkin
@@ -337,6 +379,16 @@ class Engine:
         if nights <= 0 and parsed.checkout:
             nights = max(0, (parsed.checkout - parsed.checkin).days)
         if nights <= 0:
+            # Guardar o que já se sabe: a próxima mensagem pode ser só "2".
+            session.pending_quote = {
+                "checkin": parsed.checkin,
+                "adults": parsed.adults,
+                "children": parsed.children,
+                "meal": parsed.meal,
+                "villa": parsed.villa,
+                "language": lang,
+                "at": session.last_activity,
+            }
             return [self._text(phone, templates.t(lang, "ask_nights"))]
 
         source = self.availability_source()
@@ -423,6 +475,15 @@ class Engine:
 
         total_nights = nights or 0
         if total_nights <= 0:
+            session.pending_quote = {
+                "checkin": parsed.checkin,
+                "adults": parsed.adults,
+                "children": parsed.children,
+                "meal": parsed.meal,
+                "villa": parsed.villa,
+                "language": lang,
+                "at": session.last_activity,
+            }
             return [self._text(phone, templates.t(lang, "ask_nights"))]
 
         assert parsed.checkin is not None

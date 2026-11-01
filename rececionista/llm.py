@@ -155,6 +155,8 @@ class OllamaClient:
         self.base_url = (base_url or DEFAULT_URL).rstrip("/")
         self.model = model or DEFAULT_MODEL
         self.timeout = float(timeout)
+        #: Último motivo de falha, para aparecer no registo da app.
+        self.last_error: str = ""
 
     # ------------------------------------------------------------------
     # Infraestrutura
@@ -249,21 +251,25 @@ class OllamaClient:
         if self.model.lower().startswith("qwen3"):
             payload["think"] = False
 
+        self.last_error = ""
         try:
             data = self._post("/api/chat", payload)
         except LlmError as exc:
             log.warning("LLM indisponível: %s", exc)
+            self.last_error = str(exc)
             return None
 
         content = str((data.get("message") or {}).get("content") or "")
         if not content:
             log.warning("LLM devolveu resposta vazia")
+            self.last_error = "o modelo devolveu uma resposta vazia"
             return None
 
         try:
             return self._to_result(content, today)
         except LlmError as exc:
             log.warning("LLM devolveu dados inválidos: %s", exc)
+            self.last_error = str(exc)
             return None
 
     def _to_result(self, content: str, today: date) -> LlmResult:

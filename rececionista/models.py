@@ -122,6 +122,10 @@ class Session:
     want_booking: bool = False
     clarify_count: int = 0
     last_activity: datetime | None = None
+    # Consulta interrompida por falta de noites: guarda o que o cliente já
+    # disse (entrada, hóspedes, regime, villa) para a resposta seguinte
+    # ("2") completar o pedido em vez de recomeçar do zero.
+    pending_quote: dict | None = None
 
 
 @dataclass

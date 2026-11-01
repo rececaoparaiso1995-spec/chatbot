@@ -345,6 +345,7 @@ class RecepcionistaApp(tk.Tk):
             llm_box,
             text="Usar o modelo quando as regras não percebem a mensagem",
             variable=self.use_llm_var,
+            command=self._on_llm_toggle,
         ).pack(anchor="w", padx=8, pady=(6, 2))
 
         llm_row = ttk.Frame(llm_box)
@@ -506,6 +507,7 @@ class RecepcionistaApp(tk.Tk):
 
         self._render(outs)
         self._forward(outs)
+        self._refresh_logs()
 
     def _render(self, outs: list) -> None:
         self.last_outbound = outs
@@ -751,6 +753,15 @@ class RecepcionistaApp(tk.Tk):
     def _save_runtime(self) -> None:
         self.cfg.auto_forward = bool(self.auto_forward.get())
         self.cfg.save()
+
+    def _on_llm_toggle(self) -> None:
+        """Ligar/desligar o modelo tem efeito imediato (sem esperar por Guardar)."""
+        self.cfg.use_llm = bool(self.use_llm_var.get())
+        self.cfg.save()
+        self.store.log_event(
+            "INFO", "llm", "Modelo local " + ("ligado" if self.cfg.use_llm else "desligado")
+        )
+        self._refresh_logs()
 
     def _test_ollama(self) -> None:
         client = llm.OllamaClient(
