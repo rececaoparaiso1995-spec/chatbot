@@ -702,16 +702,79 @@ class TestDisponibilidadePorFicheiro(unittest.TestCase):
         self.csv.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.checkin = start
 
-    def test_desligado_regista_pedido_sem_precos(self) -> None:
+    def test_desligado_recolhe_tudo_antes_de_registar(self) -> None:
         self.cfg.use_availability_file = False
-        out = self.engine().handle(
-            self.phone, "queria um quarto de 20 a 23 de dezembro para 2"
+        engine = self.engine()
+
+        # Datas e noites conhecidas; hóspedes já ditos (2). Falta o regime.
+        first = "\n".join(
+            o.text
+            for o in engine.handle(
+                self.phone, "queria um quarto de 20 a 23 de dezembro para 2 pessoas"
+            )
         )
+        self.assertIn("pequeno-almoço", first.lower())
+        self.assertNotIn("registei", first.lower())
+
+        second = "\n".join(
+            o.text for o in engine.handle(self.phone, "com pequeno-almoço")
+        )
+        self.assertIn("como se chama", second.lower())
+
+        out = engine.handle(self.phone, "Ana Silva")
         text = "\n".join(o.text for o in out)
         self.assertIn("20/12", text)
+        self.assertIn("23/12", text)
+        self.assertIn("Ana Silva", text)
+        self.assertIn("pequeno-almoço", text.lower())
         self.assertIn("receção", text.lower())
         self.assertNotIn("€", text)
         self.assertTrue(any(o.meta.get("escalate") for o in out))
+
+        # O pedido fica visível para a receção no separador Pedidos.
+        pedidos = self.store.bookings()
+        self.assertEqual(len(pedidos), 1)
+        self.assertEqual(pedidos[0]["name"], "Ana Silva")
+        self.assertEqual(pedidos[0]["meal"], "BB")
+        self.assertEqual(pedidos[0]["nights"], 3)
+
+    def test_desligado_aceita_respostas_curtas(self) -> None:
+        self.cfg.use_availability_file = False
+        engine = self.engine()
+        passos = [
+            ("de 20 a 23 de dezembro", "quantas pessoas"),
+            ("2", "pequeno-almoço"),
+            ("sem", "como se chama"),
+        ]
+        for message, expected in passos:
+            text = "\n".join(o.text for o in engine.handle(self.phone, message)).lower()
+            self.assertIn(expected, text, msg=f"depois de {message!r}")
+
+        out = engine.handle(self.phone, "Romeu Costa")
+        text = "\n".join(o.text for o in out)
+        self.assertIn("Romeu Costa", text)
+        self.assertIn("sem pequeno-almoço", text.lower())
+        self.assertNotIn("€", text)
+
+    def test_reserva_por_dias_da_semana_nao_pede_noites(self) -> None:
+        self.cfg.use_availability_file = False
+        text = "\n".join(
+            o.text
+            for o in self.engine().handle(
+                self.phone, "queria reservar de quinta a domingo para 2 pessoas"
+            )
+        )
+        self.assertNotIn("quantas noites", text.lower())
+        self.assertIn("pequeno-almoço", text.lower())
+
+    def test_desligado_nao_regista_pedido_incompleto(self) -> None:
+        self.cfg.use_availability_file = False
+        engine = self.engine()
+        engine.handle(self.phone, "de 20 a 23 de dezembro para 2 pessoas")
+        engine.handle(self.phone, "com pequeno-almoço")
+        self.assertEqual(self.store.bookings(), [])
+        engine.handle(self.phone, "Ana Silva")
+        self.assertEqual(len(self.store.bookings()), 1)
 
     def test_ligado_le_precos_do_ficheiro(self) -> None:
         self.write_csv()

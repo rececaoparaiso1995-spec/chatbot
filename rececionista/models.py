@@ -126,6 +126,9 @@ class Session:
     # disse (entrada, hóspedes, regime, villa) para a resposta seguinte
     # ("2") completar o pedido em vez de recomeçar do zero.
     pending_quote: dict | None = None
+    # Pedido em recolha quando não há preços: datas, noites, hóspedes, regime
+    # e nome são pedidos um a um antes de o pedido ser registado.
+    request: dict | None = None
 
 
 @dataclass

@@ -101,10 +101,29 @@ Disponibilidade e preços (sem navegador)** há uma única escolha:
 | Interruptor | O que a app faz |
 |---|---|
 | **Ligado** | Lê `data/teste_app/disponibilidade.csv` (ou o caminho indicado) e responde com preços e disponibilidade reais desse ficheiro. |
-| **Desligado** (por defeito) | Não consulta nada. Responde *"registei o seu pedido para 20/12 a 23/12 … assim que a receção abrir alguém responde"* e marca a conversa para intervenção humana. Nunca apresenta valores. |
+| **Desligado** (por defeito) | Não consulta nada. **Recolhe os dados um a um** e só no fim regista o pedido e avisa que a receção responde ao abrir. Nunca apresenta valores. |
 
 O cabeçalho da janela mostra sempre qual está ativo: `PREÇOS: FICHEIRO LOCAL`
 (verde) ou `SEM PREÇOS · RECEÇÃO RESPONDE` (amarelo).
+
+Com o interruptor desligado, o pedido só é registado quando estiver completo:
+**datas, noites, número de pessoas, regime e nome**. A app pergunta uma coisa
+de cada vez e aceita respostas curtas:
+
+```
+Cliente: queria reservar de quinta a domingo para 2 pessoas
+Bot    : Prefere com pequeno-almoço ou só alojamento?
+Cliente: sem pequeno-almoço
+Bot    : Para registar o pedido, como se chama?
+Cliente: Ana Silva
+Bot    : Registei o seu pedido para 05/11 a 08/11 (2 hóspede(s), alojamento
+         sem pequeno-almoço), em nome de Ana Silva. Assim que a receção abrir,
+         alguém entrará em contacto… O pedido ainda não está confirmado.
+```
+
+O pedido aparece de imediato no separador **Pedidos** (estado `pending`), com
+os dados todos, para a receção responder quando abrir. Nada é registado antes
+de estar completo.
 
 O ficheiro é um CSV que se abre no Excel:
 
@@ -287,7 +306,7 @@ calibrada no PC real — os seletores estão todos em
 py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
-66 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
+69 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
 orçamento com preço por noite, alternativas, falha do PMS sem invenção,
 fluxo de reserva completo e parcial, fecho de turno, formatação de preços,
 retenção, as duas vias do interruptor de disponibilidade, a reaproveitação do

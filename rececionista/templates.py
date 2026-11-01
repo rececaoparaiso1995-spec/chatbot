@@ -45,10 +45,15 @@ STRINGS: dict[str, dict[str, str]] = {
             "e o preço assim que abrir."
         ),
         "request_noted": (
-            "Registei o seu pedido para {checkin} a {checkout} ({guests} hóspede(s)). "
-            "Assim que a receção abrir, alguém entrará em contacto com a "
-            "disponibilidade e o preço para essas datas. O pedido ainda não está "
-            "confirmado."
+            "Registei o seu pedido para {checkin} a {checkout} ({guests} hóspede(s), "
+            "{meal}), em nome de {name}. Assim que a receção abrir, alguém entrará "
+            "em contacto com a disponibilidade e o preço para essas datas. O pedido "
+            "ainda não está confirmado."
+        ),
+        "request_ask_name": "Para registar o pedido, como se chama?",
+        "request_ask_guests": "Para quantas pessoas é a estadia?",
+        "request_ask_meal": (
+            "Prefere com pequeno-almoço ou só alojamento?"
         ),
         "cannot_confirm": (
             "Neste momento não consigo confirmar a disponibilidade. Vou encaminhar "
@@ -134,10 +139,13 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "request_noted": (
             "I have registered your request from {checkin} to {checkout} "
-            "({guests} guest(s)). As soon as reception opens, someone will contact "
-            "you with availability and rates for those dates. The request is not "
-            "yet confirmed."
+            "({guests} guest(s), {meal}), in the name of {name}. As soon as "
+            "reception opens, someone will contact you with availability and rates "
+            "for those dates. The request is not yet confirmed."
         ),
+        "request_ask_name": "To register the request, what is your name?",
+        "request_ask_guests": "How many people is the stay for?",
+        "request_ask_meal": "Would you like breakfast included or room only?",
         "cannot_confirm": (
             "I cannot confirm availability at the moment. I will forward your "
             "request to reception, who will reply during the day."
@@ -220,10 +228,13 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "request_noted": (
             "He registrado su solicitud del {checkin} al {checkout} "
-            "({guests} huésped(es)). En cuanto abra recepción, alguien se pondrá en "
-            "contacto con la disponibilidad y el precio para esas fechas. La "
-            "solicitud aún no está confirmada."
+            "({guests} huésped(es), {meal}), a nombre de {name}. En cuanto abra "
+            "recepción, alguien se pondrá en contacto con la disponibilidad y el "
+            "precio para esas fechas. La solicitud aún no está confirmada."
         ),
+        "request_ask_name": "Para registrar la solicitud, ¿cómo se llama?",
+        "request_ask_guests": "¿Para cuántas personas es la estancia?",
+        "request_ask_meal": "¿Prefiere con desayuno o solo alojamiento?",
         "cannot_confirm": (
             "En este momento no puedo confirmar la disponibilidad. Voy a enviar su "
             "solicitud a recepción, que responderá durante el día."
@@ -307,10 +318,13 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "request_noted": (
             "J'ai enregistré votre demande du {checkin} au {checkout} "
-            "({guests} personne(s)). Dès l'ouverture de la réception, quelqu'un "
-            "vous contactera avec les disponibilités et le tarif pour ces dates. "
-            "La demande n'est pas encore confirmée."
+            "({guests} personne(s), {meal}), au nom de {name}. Dès l'ouverture de "
+            "la réception, quelqu'un vous contactera avec les disponibilités et le "
+            "tarif pour ces dates. La demande n'est pas encore confirmée."
         ),
+        "request_ask_name": "Pour enregistrer la demande, quel est votre nom ?",
+        "request_ask_guests": "Pour combien de personnes est le séjour ?",
+        "request_ask_meal": "Souhaitez-vous le petit-déjeuner ou la chambre seule ?",
         "cannot_confirm": (
             "Je ne peux pas confirmer les disponibilités pour le moment. Je "
             "transmets votre demande à la réception, qui répondra dans la journée."

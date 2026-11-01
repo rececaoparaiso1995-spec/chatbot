@@ -237,6 +237,8 @@ class Engine:
 
         if session.draft is not None:
             out += self._continue_booking(session, parsed, lang)
+        elif session.request is not None:
+            out += self._continue_request(session, parsed, lang)
         elif parsed.intent == "booking_confirm":
             out += self._start_booking(session, parsed, lang)
         elif parsed.has_dates:
@@ -585,7 +587,9 @@ class Engine:
         if not parsed.has_dates:
             return [self._text(phone, templates.t(lang, "ask_dates_reception"))]
 
-        total_nights = nights or 0
+        total_nights = nights or parsed.nights or 0
+        if total_nights <= 0 and parsed.checkout and parsed.checkin:
+            total_nights = max(0, (parsed.checkout - parsed.checkin).days)
         if total_nights <= 0:
             session.pending_quote = {
                 "checkin": parsed.checkin,
@@ -599,15 +603,215 @@ class Engine:
             return [self._text(phone, templates.t(lang, "ask_nights"))]
 
         assert parsed.checkin is not None
-        guests = (parsed.adults or 2) + max(0, parsed.children or 0)
+        request = session.request or {
+            "phone": phone,
+            "checkin": None,
+            "nights": None,
+            "adults": None,
+            "children": 0,
+            "meal": None,
+            "name": None,
+            "language": lang,
+        }
+        request["phone"] = phone
+        request = self._merge_request(request, parsed, total_nights)
+        request["language"] = lang
+        session.request = request
+        return self._continue_request(session, parsed, lang)
+
+    # ------------------------------------------------------------------
+    # Recolha do pedido sem preços (datas, noites, hóspedes, regime, nome)
+    # ------------------------------------------------------------------
+
+    #: Palavras que nunca são um nome próprio (sem acentos, minúsculas).
+    _NON_NAMES = {
+        "sim", "nao", "ok", "okay", "claro", "talvez", "obrigado", "obrigada",
+        "ola", "bom", "boa", "dia", "tarde", "noite", "quero", "queria",
+        "pretendo", "reservar", "reserva", "certo", "yes", "no", "thanks",
+        "hello", "si", "gracias", "oui", "non", "merci", "pequeno", "pequeno-",
+        "almoco", "pequeno-almoco", "alojamento", "com", "sem", "quarto", "villa",
+        "hospede", "hospedes", "pessoa", "pessoas", "adulto", "adultos",
+        "crianca", "criancas", "noite", "noites", "dia", "dias", "para", "ate",
+        "breakfast", "room", "only", "desayuno", "dejeuner", "petit", "avantage",
+        "pequeno_almoço", "pequenoalmoço", "hospedes", "estadia", "obrigada",
+    }
+
+    @staticmethod
+    def _guess_name(text: str) -> str | None:
+        """Aceita uma resposta directa a "como se chama?" ("Ana Silva")."""
+        candidate = (text or "").strip(" .,!?;-\t")
+        if not candidate or "@" in candidate:
+            return None
+        if any(ch.isdigit() for ch in candidate):
+            return None
+        if not all(ch.isalpha() or ch in " -'" for ch in candidate):
+            return None
+        words = candidate.split()
+        if not 1 <= len(words) <= 3 or len(candidate) < 3:
+            return None
+        normalised = [nlu.strip_accents(w.lower()).strip("-'") for w in words]
+        if any(w in Engine._NON_NAMES for w in normalised):
+            return None
+        if any(len(w) < 2 for w in normalised):
+            return None
+        return candidate.title()
+
+    @staticmethod
+    def _guess_guests(text: str) -> tuple[int, int] | None:
+        """Aceita uma resposta directa a "para quantas pessoas?" ("2")."""
+        raw = nlu.strip_accents((text or "").strip().lower()).strip(" .!?")
+        if not raw:
+            return None
+        if raw in {"casal", "couple", "somos dois", "dois", "duas"}:
+            return 2, 0
+        if raw in {"sozinho", "sozinha", "apenas eu", "solo", "just me"}:
+            return 1, 0
+        match = re.fullmatch(
+            r"(?:somos|para|seremos|eramos|éramos|sera|será)?\s*(\d{1,2})\s*"
+            r"(?:(?:adultos?|pessoas?|hospedes?|hóspedes?|personas?|people|persons?|pax)\b)?"
+            r"(?:\s*(?:e|mais|with)\s*(\d{1,2})\s*crianc(?:a|as)?s?\b)?",
+            raw,
+        )
+        if not match:
+            return None
+        adults = int(match.group(1))
+        children = int(match.group(2)) if match.group(2) else 0
+        if 1 <= adults <= 20 and 0 <= children <= 10:
+            return adults, children
+        return None
+
+    @staticmethod
+    def _guess_meal(text: str) -> str | None:
+        """Aceita uma resposta directa a "com ou sem pequeno-almoço?" ("sem")."""
+        raw = nlu.strip_accents((text or "").strip().lower())
+        if not raw:
+            return None
+        if re.search(
+            r"\b(sem|nao|não|solo alojamiento|room only|without breakfast|sans|only)\b",
+            raw,
+        ):
+            return "RO"
+        if re.search(r"\b(sim|com|yes|si|oui|breakfast|pequeno|cafe|dejeuner|petit)\b", raw):
+            return "BB"
+        return None
+
+    @staticmethod
+    def _merge_request(request: dict, parsed: nlu.Parsed, nights: int | None = None) -> dict:
+        if parsed.checkin and not request.get("checkin"):
+            request["checkin"] = parsed.checkin
+        if nights and nights > 0 and not request.get("nights"):
+            request["nights"] = nights
+        elif not request.get("nights") and parsed.checkin and parsed.checkout:
+            delta = (parsed.checkout - parsed.checkin).days
+            if delta > 0:
+                request["nights"] = delta
+        if parsed.adults and not request.get("adults"):
+            request["adults"] = parsed.adults
+            request["children"] = max(request.get("children") or 0, parsed.children or 0)
+        elif parsed.children and not request.get("children"):
+            request["children"] = parsed.children
+        if parsed.meal and not request.get("meal"):
+            request["meal"] = parsed.meal
+        if parsed.name and not request.get("name"):
+            request["name"] = parsed.name
+        return request
+
+    def _continue_request(
+        self, session: Session, parsed: nlu.Parsed, lang: str
+    ) -> list[Outbound]:
+        """Continua a recolha e só regista o pedido quando tem tudo.
+
+        Pergunta uma coisa de cada vez: hóspedes → regime → nome. As respostas
+        curtas ("2", "sem", "Ana Silva") são aceites sem precisar das palavras
+        exatas.
+        """
+        assert session.request is not None
+        request = self._merge_request(session.request, parsed)
+        session.request = request
+        phone = session.phone
+
+        if not request.get("checkin"):
+            return [self._text(phone, templates.t(lang, "ask_dates_reception"))]
+        if not request.get("nights"):
+            session.pending_quote = {
+                "checkin": request["checkin"],
+                "adults": request.get("adults"),
+                "children": request.get("children") or 0,
+                "meal": request.get("meal"),
+                "villa": None,
+                "language": lang,
+                "at": session.last_activity,
+            }
+            return [self._text(phone, templates.t(lang, "ask_nights"))]
+
+        if not request.get("adults"):
+            guests = parsed.adults and (parsed.adults, parsed.children or 0)
+            if guests is None and not (parsed.name or parsed.meal):
+                guests = self._guess_guests(parsed.raw or "")
+            if guests is None:
+                return [self._text(phone, templates.t(lang, "request_ask_guests"))]
+            request["adults"], request["children"] = guests
+
+        if not request.get("meal"):
+            meal = parsed.meal
+            if meal is None and not (parsed.name or parsed.adults):
+                meal = self._guess_meal(parsed.raw or "")
+            if meal is None:
+                return [self._text(phone, templates.t(lang, "request_ask_meal"))]
+            request["meal"] = meal
+
+        if not request.get("name"):
+            name = parsed.name
+            if name is None and not (parsed.adults or parsed.meal):
+                name = self._guess_name(parsed.raw or "")
+            if name is None:
+                return [self._text(phone, templates.t(lang, "request_ask_name"))]
+            request["name"] = name
+
+        checkin: date = request["checkin"]
+        nights: int = request["nights"]
+        guests_total = request["adults"] + (request.get("children") or 0)
+        record = self._save_request(request)
+        session.request = None
         message = templates.t(
             lang,
             "request_noted",
-            checkin=templates.dmy(parsed.checkin),
-            checkout=templates.dmy(parsed.checkin + timedelta(days=total_nights)),
-            guests=guests,
+            checkin=templates.dmy(checkin),
+            checkout=templates.dmy(checkin + timedelta(days=nights)),
+            guests=guests_total,
+            name=request["name"],
+            meal=templates.meal_label(lang, request["meal"]),
         )
-        return [self._text(phone, message, escalate=True)]
+        return [
+            self._text(phone, message, escalate=True, booking_id=record, meta_reason="pedido")
+        ]
+
+    def _save_request(self, request: dict) -> int:
+        """Regista o pedido para a receção ver no separador Pedidos."""
+        if self.store is None:
+            return 0
+        checkin: date = request["checkin"]
+        nights: int = request["nights"]
+        record = BookingRecord(
+            phone=request.get("phone", ""),
+            name=request.get("name") or "",
+            email="",
+            client_phone=request.get("phone", ""),
+            checkin=checkin.isoformat(),
+            checkout=(checkin + timedelta(days=nights)).isoformat(),
+            nights=nights,
+            adults=request.get("adults") or 2,
+            children=request.get("children") or 0,
+            villa=request.get("villa") or "",
+            meal=request.get("meal") or "BB",
+            total=0.0,
+            status="pending",
+        )
+        booking_id = self.store.save_booking(record)
+        self.store.log_event(
+            "INFO", "engine", f"Pedido sem preços #{booking_id} registado para a receção"
+        )
+        return booking_id
 
     def _compose_offers(self, offers: list[Offer], lang: str) -> str:
         blocks: list[str] = [templates.t(lang, "offers_intro")]
