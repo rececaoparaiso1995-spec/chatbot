@@ -299,6 +299,84 @@ _RE_NAME = re.compile(
 )
 
 
+# Números por extenso (PT/EN/ES/FR) usados em "duas noites", "three nights".
+_NIGHT_WORDS: dict[str, int] = {
+    "um": 1, "uma": 1, "one": 1, "uno": 1, "una": 1, "un": 1, "une": 1,
+    "dois": 2, "duas": 2, "two": 2, "dos": 2, "deux": 2,
+    "tres": 3, "three": 3, "trois": 3,
+    "quatro": 4, "four": 4, "cuatro": 4, "quatre": 4,
+    "cinco": 5, "five": 5, "cinq": 5,
+    "seis": 6, "six": 6,
+    "sete": 7, "seven": 7, "sept": 7, "siete": 7,
+    "oito": 8, "eight": 8, "huit": 8, "ocho": 8,
+    "nove": 9, "nine": 9, "neuf": 9, "nueve": 9,
+    "dez": 10, "ten": 10, "dix": 10, "diez": 10,
+}
+
+_RE_RANGE_NIGHTS = re.compile(
+    r"\b(\d{1,2})\s*(?:-|–|a|ao|ou|e|to|et|y)\s*(\d{1,2})\b(?=\s*(?:noite|dia|night|nuit|noche))"
+)
+_RE_NIGHT_WORD = re.compile(
+    r"\b(" + "|".join(_NIGHT_WORDS) + r")\s+(?:noite|noites|dia|dias|night|nights|nuit|nuits|noche|noches)\b"
+)
+
+
+def extract_nights_loose(text: str) -> tuple[int | None, str]:
+    """
+    Lê o número de noites de respostas vagas, de forma conservadora.
+
+    Só deve ser usado quando a app perguntou as noites (é aí que "2", "uns
+dias" ou "fim de semana" significam noites). Devolve (noites, motivo).
+
+    Casos tratados: `3-4 noites` (usa o limite inferior), `duas noites`,
+    `fim de semana` (2), `uma semana` (7), `duas semanas` (14), `uns dias` (2)
+    e um número solto (1..30).
+    """
+    t = _norm(text).strip()
+    if not t:
+        return None, "vazio"
+
+    # O fim de semana tem de ser testado ANTES de "semana", que está
+    # contido em "fim de semana" (senão dava 7 noites).
+    if re.search(r"\bfim[- ]?de[- ]?semana\b|\bweekend\b|\bfin de semana\b", t):
+        return 2, "fim de semana → 2 noites"
+
+    weeks = {
+        "uma semana": 7, "1 semana": 7, "a week": 7, "one week": 7,
+        "une semaine": 7, "una semana": 7, "semana": 7, "week": 7,
+        "duas semanas": 14, "2 semanas": 14, "two weeks": 14, "quinzena": 14,
+    }
+    for phrase, nights in weeks.items():
+        if phrase in t:
+            return nights, f"semana → {nights} noites"
+
+    m = _RE_RANGE_NIGHTS.search(t)
+    if m:
+        low, high = int(m.group(1)), int(m.group(2))
+        if 1 <= low <= 30 and low <= high <= 30:
+            return low, f"intervalo {low}-{high} → {low} noites (limite inferior)"
+
+    m = _RE_NIGHT_WORD.search(t)
+    if m:
+        nights = _NIGHT_WORDS[m.group(1)]
+        return nights, f"{m.group(1)} → {nights} noites"
+
+    if re.search(
+        r"\b(uns|alguns|algumas|poucos|a few|some|couple of|unos|quelques)\b", t
+    ) and re.search(r"\b(dias|noites|days|nights|dias|nuits|noches)\b", t):
+        return 2, "\"uns dias\" → 2 noites (estimativa assumida)"
+
+    if len(t.split()) <= 4:
+        bare = re.fullmatch(r"(?:cerca de |mais ou menos |apenas |só |so |just )?(\d{1,2})"
+                            r"(?:\s*(?:noite|noites|dia|dias|night|nights|nuit|nuits|noche|noches))?", t)
+        if bare:
+            nights = int(bare.group(1))
+            if 1 <= nights <= 30:
+                return nights, f"número solto → {nights} noites"
+
+    return None, "sem noites reconhecíveis"
+
+
 def extract_email(text: str) -> str | None:
     m = _RE_EMAIL.search(text)
     return m.group(0).strip() if m else None

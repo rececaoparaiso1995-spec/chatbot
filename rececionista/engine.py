@@ -222,15 +222,22 @@ class Engine:
             )
         return self._llm
 
-    def _history(self, session: Session) -> list[tuple[str, str]]:
-        """Últimas mensagens da conversa, para o modelo resolver elipses."""
+    def _history(self, session: Session, current: str = "") -> list[tuple[str, str]]:
+        """Últimas mensagens da conversa, para o modelo resolver elipses.
+
+        A base devolve as mais recentes primeiro; o modelo recebe-as por ordem
+        cronológica e sem a mensagem atual (que é enviada à parte).
+        """
         turns: list[tuple[str, str]] = []
         if self.store:
             try:
-                rows = self.store.conversation(session.phone, limit=6)
+                rows = list(self.store.conversation(session.phone, limit=7))
             except Exception:  # pragma: no cover - leitura de histórico é opcional
                 rows = []
-            for row in rows:
+            # `conversation()` já devolve por ordem cronológica.
+            if current and rows and rows[-1]["body"] == current:
+                rows = rows[:-1]
+            for row in rows[-6:]:
                 who = "user" if row["direction"] == "in" else "assistant"
                 turns.append((who, row["body"]))
         if not turns and session.last_offer is not None:
@@ -254,43 +261,51 @@ class Engine:
           * "e se ficássemos só duas noites?" depois de um orçamento —
             aproveita-se a entrada desse orçamento.
         """
-        if parsed.checkin is not None:
-            return parsed
-
         pending = session.pending_quote
         if pending is not None and pending.get("at") is not None:
             age = datetime.now() - pending["at"]
             if age > timedelta(minutes=30):
                 session.pending_quote = pending = None
+
         base = session.last_offer
         if pending is None and base is None:
             return parsed
 
+        checkin = parsed.checkin
         nights = parsed.nights or 0
-        if nights <= 0 and pending is not None:
-            # Resposta a "quantas noites?": um número solto ("2", "3 noites").
-            bare = re.sub(r"\D", "", parsed.raw or "")
-            if bare and len(bare) <= 2 and 1 <= int(bare) <= 60:
-                nights = int(bare)
-        if nights <= 0:
-            return parsed
+        adults, children = parsed.adults, parsed.children
+        meal, villa = parsed.meal, parsed.villa
 
-        if pending is not None:
-            checkin = pending["checkin"]
-            adults = parsed.adults or pending.get("adults") or 2
-            children = parsed.children or pending.get("children") or 0
-            meal = parsed.meal or pending.get("meal")
-            villa = parsed.villa or pending.get("villa")
-        else:
-            assert base is not None
+        # Resposta a "quantas noites?": "2", "duas noites", "3-4 noites",
+        # "fim de semana", "uns dias", "uma semana"…
+        # Numa resposta curta manda a interpretação de noites: "3-4 noites"
+        # pode ter sido lido como dia/mês pelo parser de datas.
+        if pending is not None and (checkin is None or len((parsed.raw or "").split()) <= 5):
+            loose, reason = nlu.extract_nights_loose(parsed.raw or "")
+            if loose:
+                log.info("Contexto: %s", reason)
+                checkin = pending["checkin"]
+                nights = loose
+                adults = adults or pending.get("adults") or 2
+                children = children or pending.get("children") or 0
+                meal = meal or pending.get("meal")
+                villa = villa or pending.get("villa")
+                session.pending_quote = None
+            elif checkin is not None:
+                return parsed  # deu datas novas e as noites não foram ditas
+
+        if checkin is None:
+            if base is None or nights <= 0:
+                return parsed
             checkin = base.checkin
             adults, children = base.adults, base.children
             meal, villa = base.meal, base.villa.code
 
+        if nights <= 0:
+            return parsed
         if not isinstance(checkin, date) or checkin < date.today():
             return parsed
 
-        session.pending_quote = None
         log.info(
             "Contexto: %s noite(s) aplicadas à entrada de %s (%s)",
             nights, checkin, "consulta pendente" if pending else "último orçamento",
@@ -328,7 +343,7 @@ class Engine:
             return parsed
 
         result = client.interpret(
-            text, today=now.date(), history=self._history(session)
+            text, today=now.date(), history=self._history(session, current=text)
         )
         if result is None or not result.is_useful():
             # Visível no separador Registos: sem isto, uma falha do modelo é

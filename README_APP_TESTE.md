@@ -190,9 +190,14 @@ Ollama for antigo, atualize-o a partir do site.
   reaproveitam a entrada do último orçamento **sem** chamar o modelo (é lógica
   de sessão, determinística).
 - Respostas curtas a uma pergunta da app — depois de *"Quantas noites pretende
-  ficar?"*, responder apenas `2` (ou `2 noites`) **completa** o pedido com as
-  datas já dadas, em vez de voltar ao início. Isto também é lógica de sessão,
-  não do modelo: a consulta pendente vale 30 minutos.
+  ficar?"*, a resposta **completa** o pedido com as datas já dadas, em vez de
+  voltar ao início. Respostas aceites: `2`, `2 noites`, `duas noites`,
+  `3-4 noites` (usa 3, o limite inferior), `cerca de 4`, `fim de semana` (2),
+  `uma semana` (7), `duas semanas` (14) e `uns dias` (2). Isto é lógica de
+  sessão, não do modelo: a consulta pendente vale 30 minutos.
+- Se responder com **datas novas** (*"afinal de 25 a 27 de dezembro"*), essas
+  datas ganham às guardadas — só as noites são aproveitadas da consulta
+  pendente.
 - Se o modelo não ajudar, o **separador Registos** mostra o motivo
   (`Modelo não ajudou: Ollama inacessível…`, `JSON inválido…`). Antes, uma
   falha do modelo era indistinguível de "as regras também não perceberam".
@@ -261,7 +266,7 @@ calibrada no PC real — os seletores estão todos em
 py -3 -m unittest tests.test_rececionista_engine -v
 ```
 
-51 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
+52 testes cobrem: datas em 4 idiomas, hóspedes/regime/villa, gates de modo,
 orçamento com preço por noite, alternativas, falha do PMS sem invenção,
 fluxo de reserva completo e parcial, fecho de turno, formatação de preços,
 retenção, as duas vias do interruptor de disponibilidade, a reaproveitação do

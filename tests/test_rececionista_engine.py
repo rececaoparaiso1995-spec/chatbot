@@ -389,6 +389,10 @@ class TestCompreensaoComLLM(BaseComLLM):
         engine.handle(self.phone, self.FRASE_AMBIGUA)
         self.assertEqual(fake.calls, 1)
         self.assertTrue(any("Bom dia" in text for _, text in fake.last_history))
+        # Histórico por ordem cronológica e sem a mensagem atual.
+        self.assertEqual(fake.last_history[0][0], "user")
+        self.assertEqual(fake.last_history[-1][0], "assistant")
+        self.assertNotIn(self.FRASE_AMBIGUA, [t for _, t in fake.last_history])
 
 
 class TestContextoDaConversa(Base):
@@ -435,6 +439,33 @@ class TestContextoDaConversa(Base):
         )
         text = "\n".join(o.text for o in self.engine.handle(self.phone, "2 noites"))
         self.assertIn("€", text)
+
+    def test_respostas_vagas_de_noites(self) -> None:
+        casos = {
+            "uns dias": 2,
+            "fim de semana": 2,
+            "3-4 noites": 3,
+            "duas noites": 2,
+            "uma semana": 7,
+            "cerca de 4": 4,
+        }
+        for answer, nights in casos.items():
+            with self.subTest(answer=answer):
+                self.engine.reset_sessions()
+                day = self.find_available(nights=nights)
+                first = "\n".join(
+                    o.text
+                    for o in self.engine.handle(
+                        self.phone,
+                        f"disponibilidade para {day.strftime('%d/%m/%Y')} para 2 pessoas",
+                    )
+                )
+                self.assertIn("quantas noites", first.lower())
+                second = "\n".join(
+                    o.text for o in self.engine.handle(self.phone, answer)
+                )
+                self.assertIn(templates.dmy(day), second)
+                self.assertIn(f"{nights} noite(s)", second)
 
     def test_numero_solto_sem_consulta_pendente_nao_e_noites(self) -> None:
         text = "\n".join(o.text for o in self.engine.handle(self.phone, "2"))
